@@ -1,0 +1,12 @@
+{
+  "name": "websearch-server",
+  "version": "1.0.0",
+  "description": "MCP web search server for VAT validation agent",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {}
+}
