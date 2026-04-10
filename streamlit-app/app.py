@@ -42,13 +42,12 @@ st.markdown("""
     .match-row { background-color: #0d1117; padding: 8px 12px; border-radius: 4px; margin: 2px 0; }
     .mismatch-row { background-color: #1c1410; border-left: 3px solid #f59e0b;
                     padding: 8px 12px; border-radius: 4px; margin: 2px 0; }
-    .zero-vat-row { background-color: #0d1117; padding: 8px 12px; border-radius: 4px;
-                    margin: 2px 0; opacity: 0.7; }
+
     .status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
                     font-size: 0.75rem; font-weight: 600; }
     .badge-match { background: #1a3a2a; color: #4ade80; }
     .badge-mismatch { background: #3a2a1a; color: #f59e0b; }
-    .badge-zero { background: #1a1a2a; color: #818cf8; }
+
     .badge-special { background: #2a1a3a; color: #c084fc; }
 </style>
 """, unsafe_allow_html=True)
@@ -76,15 +75,7 @@ if "scan_progress" not in st.session_state:
 if "logs" not in st.session_state:
     st.session_state.logs = []
 
-# ─── Known 0% VAT territories ────────────────────────────────────────────────
-# These are legitimately 0% — don't flag as errors
-ZERO_VAT_TERRITORIES = {
-    "AS", "BM", "CU", "ER", "GF", "GG", "GI", "GU", "HK", "IQ",
-    "JE", "KW", "MO", "NR", "PM", "QA", "SM", "SY", "TC", "TL",
-    "TK", "US", "VG", "VI", "WF", "YT",
-}
-
-# Known special/calculated rates — don't flag small differences
+# Known special/calculated rates — annotate but still validate
 SPECIAL_RATES = {
     "RU": {"rate": 16.67, "note": "Calculated effective rate (20/120)"},
 }
@@ -116,7 +107,7 @@ Rules:
 - Return ONLY the standard/general VAT rate (not reduced rates, not luxury rates)
 - If the country has a GST instead of VAT, return that rate
 - If the country has NO VAT/GST system at all, return 0
-- For territories with 0% VAT, confirm it's legitimately 0%
+- For territories currently at 0% VAT, verify whether this is still correct — tax laws change
 - For calculated rates like Russia's 16.67% (which is 20/120), note this is a calculated figure
 - If search results are unclear or contradictory, return the most commonly cited rate
 - Return your answer as JSON only, no other text
@@ -261,27 +252,18 @@ if st.session_state.entries:
     st.caption("Searches the web for each country's current VAT rate, then uses DeepSeek to compare.")
 
     # Batch size control
-    col_a, col_b, col_c = st.columns([1, 1, 1])
+    col_a, col_b = st.columns([1, 1])
     with col_a:
         batch_size = st.number_input("Batch size", min_value=1, max_value=185, value=10,
                                      help="Countries to validate per batch. Lower = slower but cheaper.")
     with col_b:
         delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
                                         help="Delay between API calls to avoid rate limits.")
-    with col_c:
-        skip_zero_vat = st.checkbox("Skip known 0% territories", value=True,
-                                    help="Skip territories that legitimately have 0% VAT")
 
-    # Filter entries to validate
+    # All entries get validated — no territory is skipped
     entries_to_validate = st.session_state.entries.copy()
-    if skip_zero_vat:
-        entries_to_validate = [
-            e for e in entries_to_validate
-            if not (e.iso_code in ZERO_VAT_TERRITORIES and e.vat_rate == 0)
-        ]
 
-    st.info(f"Will validate **{len(entries_to_validate)}** countries"
-            f" (skipping {len(st.session_state.entries) - len(entries_to_validate)} known 0% territories)")
+    st.info(f"Will validate all **{len(entries_to_validate)}** countries — no territories skipped")
 
     if st.button("🔍 Start Validation Scan", use_container_width=True):
         st.session_state.scan_running = True
