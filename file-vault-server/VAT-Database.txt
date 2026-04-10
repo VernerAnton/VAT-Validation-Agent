@@ -1,0 +1,206 @@
+Option Explicit
+
+' ===================================================================
+' MODULE 2: COUNTRY VAT DATA STORAGE
+' ===================================================================
+' This module contains the hardcoded country data (185 countries)
+' It's in a separate module to keep the main code clean and readable
+' ===================================================================
+
+' ===================================================================
+' PUBLIC FUNCTION: Returns array of all country data
+' ===================================================================
+' Returns: 2D array with columns: Code, Country_Full, VAT_Rate
+' ===================================================================
+Public Function GetCountryVATData() As Variant
+    Dim countryData(1 To 185, 1 To 3) As Variant
+    
+    ' Format: Code, Country_Name, VAT_Rate
+    countryData(1, 1) = "AD": countryData(1, 2) = "Andorra": countryData(1, 3) = 4.5
+    countryData(2, 1) = "AE": countryData(2, 2) = "United Arab Emirates": countryData(2, 3) = 5
+    countryData(3, 1) = "AI": countryData(3, 2) = "Anguilla (UK)": countryData(3, 3) = 13
+    countryData(4, 1) = "AL": countryData(4, 2) = "Albania": countryData(4, 3) = 20
+    countryData(5, 1) = "AM": countryData(5, 2) = "Armenia": countryData(5, 3) = 20
+    countryData(6, 1) = "AO": countryData(6, 2) = "Angola": countryData(6, 3) = 14
+    countryData(7, 1) = "AR": countryData(7, 2) = "Argentina": countryData(7, 3) = 21
+    countryData(8, 1) = "AS": countryData(8, 2) = "American Samoa (US)": countryData(8, 3) = 0
+    countryData(9, 1) = "AT": countryData(9, 2) = "Austria": countryData(9, 3) = 20
+    countryData(10, 1) = "AU": countryData(10, 2) = "Australia": countryData(10, 3) = 10
+    countryData(11, 1) = "AZ": countryData(11, 2) = "Azerbaijan": countryData(11, 3) = 18
+    countryData(12, 1) = "BA": countryData(12, 2) = "Bosnia and Herzegovina": countryData(12, 3) = 17
+    countryData(13, 1) = "BB": countryData(13, 2) = "Barbados": countryData(13, 3) = 17.5
+    countryData(14, 1) = "BD": countryData(14, 2) = "Bangladesh": countryData(14, 3) = 15
+    countryData(15, 1) = "BE": countryData(15, 2) = "Belgium": countryData(15, 3) = 21
+    countryData(16, 1) = "BF": countryData(16, 2) = "Burkina Faso": countryData(16, 3) = 18
+    countryData(17, 1) = "BG": countryData(17, 2) = "Bulgaria": countryData(17, 3) = 20
+    countryData(18, 1) = "BH": countryData(18, 2) = "Bahrain": countryData(18, 3) = 10
+    countryData(19, 1) = "BJ": countryData(19, 2) = "Benin": countryData(19, 3) = 18
+    countryData(20, 1) = "BM": countryData(20, 2) = "Bermuda": countryData(20, 3) = 0
+    countryData(21, 1) = "BO": countryData(21, 2) = "Bolivia": countryData(21, 3) = 13
+    countryData(22, 1) = "BR": countryData(22, 2) = "Brazil": countryData(22, 3) = 26.5
+    countryData(23, 1) = "BS": countryData(23, 2) = "Bahamas": countryData(23, 3) = 10
+    countryData(24, 1) = "BW": countryData(24, 2) = "Botswana": countryData(24, 3) = 14
+    countryData(25, 1) = "BY": countryData(25, 2) = "Belarus": countryData(25, 3) = 20
+    countryData(26, 1) = "BZ": countryData(26, 2) = "Belize": countryData(26, 3) = 12.5
+    countryData(27, 1) = "CA": countryData(27, 2) = "Canada": countryData(27, 3) = 5
+    countryData(28, 1) = "CD": countryData(28, 2) = "DR Congo": countryData(28, 3) = 16
+    countryData(29, 1) = "CG": countryData(29, 2) = "Republic of Congo": countryData(29, 3) = 18
+    countryData(30, 1) = "CH": countryData(30, 2) = "Switzerland": countryData(30, 3) = 8.1
+    countryData(31, 1) = "CI": countryData(31, 2) = "Côte d'Ivoire": countryData(31, 3) = 18
+    countryData(32, 1) = "CL": countryData(32, 2) = "Chile": countryData(32, 3) = 19
+    countryData(33, 1) = "CM": countryData(33, 2) = "Cameroon": countryData(33, 3) = 19.25
+    countryData(34, 1) = "CN": countryData(34, 2) = "China": countryData(34, 3) = 13
+    countryData(35, 1) = "CO": countryData(35, 2) = "Colombia": countryData(35, 3) = 19
+    countryData(36, 1) = "CR": countryData(36, 2) = "Costa Rica": countryData(36, 3) = 13
+    countryData(37, 1) = "CU": countryData(37, 2) = "Cuba": countryData(37, 3) = 0
+    countryData(38, 1) = "CV": countryData(38, 2) = "Cabo Verde": countryData(38, 3) = 15
+    countryData(39, 1) = "CY": countryData(39, 2) = "Cyprus": countryData(39, 3) = 19
+    countryData(40, 1) = "CZ": countryData(40, 2) = "Czech Republic": countryData(40, 3) = 21
+    countryData(41, 1) = "DE": countryData(41, 2) = "Germany": countryData(41, 3) = 19
+    countryData(42, 1) = "DK": countryData(42, 2) = "Denmark": countryData(42, 3) = 25
+    countryData(43, 1) = "DM": countryData(43, 2) = "Dominica": countryData(43, 3) = 15
+    countryData(44, 1) = "DO": countryData(44, 2) = "Dominican Republic": countryData(44, 3) = 18
+    countryData(45, 1) = "EC": countryData(45, 2) = "Ecuador": countryData(45, 3) = 15
+    countryData(46, 1) = "EE": countryData(46, 2) = "Estonia": countryData(46, 3) = 24
+    countryData(47, 1) = "EG": countryData(47, 2) = "Egypt": countryData(47, 3) = 14
+    countryData(48, 1) = "ER": countryData(48, 2) = "Eritrea": countryData(48, 3) = 0
+    countryData(49, 1) = "ES": countryData(49, 2) = "Spain": countryData(49, 3) = 21
+    countryData(50, 1) = "ET": countryData(50, 2) = "Ethiopia": countryData(50, 3) = 15
+    countryData(51, 1) = "FI": countryData(51, 2) = "Finland": countryData(51, 3) = 25.5
+    countryData(52, 1) = "FJ": countryData(52, 2) = "Fiji": countryData(52, 3) = 12.5
+    countryData(53, 1) = "FR": countryData(53, 2) = "France": countryData(53, 3) = 20
+    countryData(54, 1) = "GA": countryData(54, 2) = "Gabon": countryData(54, 3) = 18
+    countryData(55, 1) = "GB": countryData(55, 2) = "United Kingdom": countryData(55, 3) = 20
+    countryData(56, 1) = "GE": countryData(56, 2) = "Georgia": countryData(56, 3) = 18
+    countryData(57, 1) = "GF": countryData(57, 2) = "French Guiana": countryData(57, 3) = 0
+    countryData(58, 1) = "GG": countryData(58, 2) = "Guernsey (UK)": countryData(58, 3) = 0
+    countryData(59, 1) = "GH": countryData(59, 2) = "Ghana": countryData(59, 3) = 12.5
+    countryData(60, 1) = "GI": countryData(60, 2) = "Gibraltar": countryData(60, 3) = 0
+    countryData(61, 1) = "GM": countryData(61, 2) = "Gambia": countryData(61, 3) = 15
+    countryData(62, 1) = "GN": countryData(62, 2) = "Guinea": countryData(62, 3) = 18
+    countryData(63, 1) = "GP": countryData(63, 2) = "Guadeloupe (FR)": countryData(63, 3) = 8.5
+    countryData(64, 1) = "GR": countryData(64, 2) = "Greece": countryData(64, 3) = 24
+    countryData(65, 1) = "GT": countryData(65, 2) = "Guatemala": countryData(65, 3) = 12
+    countryData(66, 1) = "GU": countryData(66, 2) = "Guam (US)": countryData(66, 3) = 0
+    countryData(67, 1) = "HK": countryData(67, 2) = "Hong Kong": countryData(67, 3) = 0
+    countryData(68, 1) = "HN": countryData(68, 2) = "Honduras": countryData(68, 3) = 15
+    countryData(69, 1) = "HR": countryData(69, 2) = "Croatia": countryData(69, 3) = 25
+    countryData(70, 1) = "HT": countryData(70, 2) = "Haiti": countryData(70, 3) = 10
+    countryData(71, 1) = "HU": countryData(71, 2) = "Hungary": countryData(71, 3) = 27
+    countryData(72, 1) = "ID": countryData(72, 2) = "Indonesia": countryData(72, 3) = 12
+    countryData(73, 1) = "IE": countryData(73, 2) = "Ireland": countryData(73, 3) = 23
+    countryData(74, 1) = "IL": countryData(74, 2) = "Israel": countryData(74, 3) = 18
+    countryData(75, 1) = "IM": countryData(75, 2) = "Isle of Man (UK)": countryData(75, 3) = 20
+    countryData(76, 1) = "IN": countryData(76, 2) = "India": countryData(76, 3) = 18
+    countryData(77, 1) = "IQ": countryData(77, 2) = "Iraq": countryData(77, 3) = 0
+    countryData(78, 1) = "IR": countryData(78, 2) = "Iran": countryData(78, 3) = 9
+    countryData(79, 1) = "IS": countryData(79, 2) = "Iceland": countryData(79, 3) = 24
+    countryData(80, 1) = "IT": countryData(80, 2) = "Italy": countryData(80, 3) = 22
+    countryData(81, 1) = "JE": countryData(81, 2) = "Jersey (UK)": countryData(81, 3) = 0
+    countryData(82, 1) = "JM": countryData(82, 2) = "Jamaica": countryData(82, 3) = 15
+    countryData(83, 1) = "JO": countryData(83, 2) = "Jordan": countryData(83, 3) = 16
+    countryData(84, 1) = "JP": countryData(84, 2) = "Japan": countryData(84, 3) = 10
+    countryData(85, 1) = "KE": countryData(85, 2) = "Kenya": countryData(85, 3) = 16
+    countryData(86, 1) = "KG": countryData(86, 2) = "Kyrgyzstan": countryData(86, 3) = 12
+    countryData(87, 1) = "KH": countryData(87, 2) = "Cambodia": countryData(87, 3) = 10
+    countryData(88, 1) = "KR": countryData(88, 2) = "South Korea": countryData(88, 3) = 10
+    countryData(89, 1) = "KW": countryData(89, 2) = "Kuwait": countryData(89, 3) = 0
+    countryData(90, 1) = "KZ": countryData(90, 2) = "Kazakhstan": countryData(90, 3) = 12
+    countryData(91, 1) = "LA": countryData(91, 2) = "Laos": countryData(91, 3) = 10
+    countryData(92, 1) = "LB": countryData(92, 2) = "Lebanon": countryData(92, 3) = 11
+    countryData(93, 1) = "LI": countryData(93, 2) = "Liechtenstein": countryData(93, 3) = 8.1
+    countryData(94, 1) = "LK": countryData(94, 2) = "Sri Lanka": countryData(94, 3) = 18
+    countryData(95, 1) = "LT": countryData(95, 2) = "Lithuania": countryData(95, 3) = 21
+    countryData(96, 1) = "LU": countryData(96, 2) = "Luxembourg": countryData(96, 3) = 17
+    countryData(97, 1) = "LV": countryData(97, 2) = "Latvia": countryData(97, 3) = 21
+    countryData(98, 1) = "MA": countryData(98, 2) = "Morocco": countryData(98, 3) = 20
+    countryData(99, 1) = "MC": countryData(99, 2) = "Monaco": countryData(99, 3) = 20
+    countryData(100, 1) = "MD": countryData(100, 2) = "Moldova": countryData(100, 3) = 20
+    countryData(101, 1) = "ME": countryData(101, 2) = "Montenegro": countryData(101, 3) = 21
+    countryData(102, 1) = "MG": countryData(102, 2) = "Madagascar": countryData(102, 3) = 20
+    countryData(103, 1) = "MK": countryData(103, 2) = "North Macedonia": countryData(103, 3) = 18
+    countryData(104, 1) = "ML": countryData(104, 2) = "Mali": countryData(104, 3) = 18
+    countryData(105, 1) = "MM": countryData(105, 2) = "Myanmar": countryData(105, 3) = 5
+    countryData(106, 1) = "MN": countryData(106, 2) = "Mongolia": countryData(106, 3) = 10
+    countryData(107, 1) = "MO": countryData(107, 2) = "Macau": countryData(107, 3) = 0
+    countryData(108, 1) = "MQ": countryData(108, 2) = "Martinique (FR)": countryData(108, 3) = 8.5
+    countryData(109, 1) = "MR": countryData(109, 2) = "Mauritania": countryData(109, 3) = 16
+    countryData(110, 1) = "MU": countryData(110, 2) = "Mauritius": countryData(110, 3) = 15
+    countryData(111, 1) = "MT": countryData(111, 2) = "Malta": countryData(111, 3) = 18
+    countryData(112, 1) = "TK": countryData(112, 2) = "Tokelau": countryData(112, 3) = 0
+    countryData(113, 1) = "MW": countryData(113, 2) = "Malawi": countryData(113, 3) = 16.5
+    countryData(114, 1) = "MX": countryData(114, 2) = "Mexico": countryData(114, 3) = 16
+    countryData(115, 1) = "MY": countryData(115, 2) = "Malaysia": countryData(115, 3) = 8
+    countryData(116, 1) = "NA": countryData(116, 2) = "Namibia": countryData(116, 3) = 15
+    countryData(117, 1) = "NC": countryData(117, 2) = "New Caledonia (FR)": countryData(117, 3) = 11
+    countryData(118, 1) = "NE": countryData(118, 2) = "Niger": countryData(118, 3) = 19
+    countryData(119, 1) = "NG": countryData(119, 2) = "Nigeria": countryData(119, 3) = 7.5
+    countryData(120, 1) = "NI": countryData(120, 2) = "Nicaragua": countryData(120, 3) = 15
+    countryData(121, 1) = "NL": countryData(121, 2) = "Netherlands": countryData(121, 3) = 21
+    countryData(122, 1) = "NO": countryData(122, 2) = "Norway": countryData(122, 3) = 25
+    countryData(123, 1) = "NP": countryData(123, 2) = "Nepal": countryData(123, 3) = 13
+    countryData(124, 1) = "NR": countryData(124, 2) = "Nauru": countryData(124, 3) = 0
+    countryData(125, 1) = "NZ": countryData(125, 2) = "New Zealand": countryData(125, 3) = 15
+    countryData(126, 1) = "OM": countryData(126, 2) = "Oman": countryData(126, 3) = 5
+    countryData(127, 1) = "PA": countryData(127, 2) = "Panama": countryData(127, 3) = 7
+    countryData(128, 1) = "PE": countryData(128, 2) = "Peru": countryData(128, 3) = 18
+    countryData(129, 1) = "PF": countryData(129, 2) = "French Polynesia (FR)": countryData(129, 3) = 16
+    countryData(130, 1) = "PG": countryData(130, 2) = "Papua New Guinea": countryData(130, 3) = 10
+    countryData(131, 1) = "PH": countryData(131, 2) = "Philippines": countryData(131, 3) = 12
+    countryData(132, 1) = "PK": countryData(132, 2) = "Pakistan": countryData(132, 3) = 18
+    countryData(133, 1) = "PL": countryData(133, 2) = "Poland": countryData(133, 3) = 23
+    countryData(134, 1) = "PM": countryData(134, 2) = "Saint Pierre and Miquelon (FR)": countryData(134, 3) = 0
+    countryData(135, 1) = "PR": countryData(135, 2) = "Puerto Rico (US)": countryData(135, 3) = 11.5
+    countryData(136, 1) = "PT": countryData(136, 2) = "Portugal": countryData(136, 3) = 23
+    countryData(137, 1) = "PY": countryData(137, 2) = "Paraguay": countryData(137, 3) = 10
+    countryData(138, 1) = "QA": countryData(138, 2) = "Qatar": countryData(138, 3) = 0
+    countryData(139, 1) = "RE": countryData(139, 2) = "Reunion (FR)": countryData(139, 3) = 8.5
+    countryData(140, 1) = "RO": countryData(140, 2) = "Romania": countryData(140, 3) = 21
+    countryData(141, 1) = "RS": countryData(141, 2) = "Serbia": countryData(141, 3) = 20
+    countryData(142, 1) = "RU": countryData(142, 2) = "Russia": countryData(142, 3) = 16.67
+    countryData(143, 1) = "RW": countryData(143, 2) = "Rwanda": countryData(143, 3) = 18
+    countryData(144, 1) = "SA": countryData(144, 2) = "Saudi Arabia": countryData(144, 3) = 15
+    countryData(145, 1) = "SC": countryData(145, 2) = "Seychelles": countryData(145, 3) = 15
+    countryData(146, 1) = "SD": countryData(146, 2) = "Sudan": countryData(146, 3) = 17
+    countryData(147, 1) = "SE": countryData(147, 2) = "Sweden": countryData(147, 3) = 25
+    countryData(148, 1) = "SG": countryData(148, 2) = "Singapore": countryData(148, 3) = 9
+    countryData(149, 1) = "SI": countryData(149, 2) = "Slovenia": countryData(149, 3) = 22
+    countryData(150, 1) = "SK": countryData(150, 2) = "Slovakia": countryData(150, 3) = 23
+    countryData(151, 1) = "SL": countryData(151, 2) = "Sierra Leone": countryData(151, 3) = 15
+    countryData(152, 1) = "SM": countryData(152, 2) = "San Marino": countryData(152, 3) = 0
+    countryData(153, 1) = "SN": countryData(153, 2) = "Senegal": countryData(153, 3) = 18
+    countryData(154, 1) = "SR": countryData(154, 2) = "Suriname": countryData(154, 3) = 10
+    countryData(155, 1) = "ST": countryData(155, 2) = "São Tomé and Príncipe": countryData(155, 3) = 15
+    countryData(156, 1) = "SV": countryData(156, 2) = "El Salvador": countryData(156, 3) = 13
+    countryData(157, 1) = "SY": countryData(157, 2) = "Syria": countryData(157, 3) = 0
+    countryData(158, 1) = "TC": countryData(158, 2) = "Turks and Caicos (UK)": countryData(158, 3) = 0
+    countryData(159, 1) = "TG": countryData(159, 2) = "Togo": countryData(159, 3) = 18
+    countryData(160, 1) = "TH": countryData(160, 2) = "Thailand": countryData(160, 3) = 7
+    countryData(161, 1) = "TJ": countryData(161, 2) = "Tajikistan": countryData(161, 3) = 15
+    countryData(162, 1) = "TM": countryData(162, 2) = "Turkmenistan": countryData(162, 3) = 15
+    countryData(163, 1) = "TL": countryData(163, 2) = "Timor-Leste": countryData(163, 3) = 0
+    countryData(164, 1) = "TN": countryData(164, 2) = "Tunisia": countryData(164, 3) = 19
+    countryData(165, 1) = "TR": countryData(165, 2) = "Turkey": countryData(165, 3) = 20
+    countryData(166, 1) = "TT": countryData(166, 2) = "Trinidad and Tobago": countryData(166, 3) = 12.5
+    countryData(167, 1) = "TW": countryData(167, 2) = "Taiwan": countryData(167, 3) = 5
+    countryData(168, 1) = "TZ": countryData(168, 2) = "Tanzania": countryData(168, 3) = 18
+    countryData(169, 1) = "UA": countryData(169, 2) = "Ukraine": countryData(169, 3) = 20
+    countryData(170, 1) = "UG": countryData(170, 2) = "Uganda": countryData(170, 3) = 18
+    countryData(171, 1) = "US": countryData(171, 2) = "United States": countryData(171, 3) = 0
+    countryData(172, 1) = "UY": countryData(172, 2) = "Uruguay": countryData(172, 3) = 22
+    countryData(173, 1) = "UZ": countryData(173, 2) = "Uzbekistan": countryData(173, 3) = 12
+    countryData(174, 1) = "VC": countryData(174, 2) = "Saint Vincent and the Grenadines": countryData(174, 3) = 16
+    countryData(175, 1) = "VE": countryData(175, 2) = "Venezuela": countryData(175, 3) = 16
+    countryData(176, 1) = "VG": countryData(176, 2) = "British Virgin Islands (UK)": countryData(176, 3) = 0
+    countryData(177, 1) = "VI": countryData(177, 2) = "U.S. Virgin Islands (US)": countryData(177, 3) = 0
+    countryData(178, 1) = "VN": countryData(178, 2) = "Vietnam": countryData(178, 3) = 8
+    countryData(179, 1) = "WF": countryData(179, 2) = "Wallis and Futuna (FR)": countryData(179, 3) = 0
+    countryData(180, 1) = "YE": countryData(180, 2) = "Yemen": countryData(180, 3) = 5
+    countryData(181, 1) = "YT": countryData(181, 2) = "Mayotte (FR)": countryData(181, 3) = 0
+    countryData(182, 1) = "ZA": countryData(182, 2) = "South Africa": countryData(182, 3) = 15.5
+    countryData(183, 1) = "ZM": countryData(183, 2) = "Zambia": countryData(183, 3) = 16
+    countryData(184, 1) = "ZW": countryData(184, 2) = "Zimbabwe": countryData(184, 3) = 15
+    countryData(185, 1) = "Unknown": countryData(185, 2) = "Unknown": countryData(185, 3) = 0
+    
+    GetCountryVATData = countryData
+End Function
