@@ -20,7 +20,7 @@ from mcp_client import McpClient
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 FILE_VAULT_URL = os.environ.get("FILE_VAULT_URL", "http://localhost:3001")
 WEBSEARCH_URL = os.environ.get("WEBSEARCH_URL", "http://localhost:3002")
 SANDBOX_URL = os.environ.get("SANDBOX_URL", "http://localhost:3003")
@@ -88,7 +88,14 @@ def add_log(msg: str):
 
 
 def get_deepseek_client() -> OpenAI:
-    return OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+    return OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url="https://openrouter.ai/api/v1",
+        default_headers={
+            "HTTP-Referer": "https://vat-validation-agent.up.railway.app",
+            "X-Title": "VAT Validation Agent",
+        }
+    )
 
 
 def analyze_vat_with_llm(
@@ -130,7 +137,7 @@ What is the current standard VAT/GST rate for {country_name}? Return JSON only."
 
     try:
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek/deepseek-v3.2",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -168,9 +175,9 @@ with st.sidebar:
     sandbox_url = st.text_input("Sandbox Server", value=SANDBOX_URL)
 
     st.subheader("LLM")
-    deepseek_key = st.text_input("DeepSeek API Key", value=DEEPSEEK_API_KEY, type="password")
+    deepseek_key = st.text_input("OpenRouter API Key", value=OPENROUTER_API_KEY, type="password")
     if deepseek_key:
-        DEEPSEEK_API_KEY = deepseek_key
+        OPENROUTER_API_KEY = deepseek_key
 
     st.divider()
 
