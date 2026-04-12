@@ -5,6 +5,7 @@ Each server runs on Railway with a POST /mcp endpoint. This client sends
 JSON-RPC 2.0 messages following the MCP Streamable HTTP transport spec.
 """
 
+import json
 import httpx
 from typing import Any
 
@@ -17,6 +18,28 @@ def _jsonrpc(method: str, params: dict | None = None, id: int = 1) -> dict:
     if params is not None:
         msg["params"] = params
     return msg
+
+
+def _parse_sse(text: str) -> dict:
+    """Return the first JSON-RPC response object found in an SSE stream."""
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            payload = line[5:].strip()
+            if payload:
+                try:
+                    obj = json.loads(payload)
+                    if isinstance(obj, dict) and ("result" in obj or "error" in obj):
+                        return obj
+                except json.JSONDecodeError:
+                    pass
+    raise ValueError(f"No JSON-RPC result found in SSE stream: {text!r}")
+
+
+def _parse_response(resp: httpx.Response) -> dict:
+    """Parse an MCP server response handling both JSON and SSE content types."""
+    if "text/event-stream" in resp.headers.get("content-type", ""):
+        return _parse_sse(resp.text)
+    return resp.json()
 
 
 class McpClient:
@@ -75,7 +98,7 @@ class McpClient:
                 headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
             )
             resp.raise_for_status()
-            data = resp.json()
+            data = _parse_response(resp)
 
             if "error" in data:
                 raise RuntimeError(f"MCP error: {data['error']}")
