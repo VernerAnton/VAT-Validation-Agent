@@ -118,11 +118,15 @@ Rules:
 - For calculated rates like Russia's 16.67% (which is 20/120), note this is a calculated figure
 - If search results are unclear or contradictory, return the most commonly cited rate
 - Return your answer as JSON only, no other text
+- If a country has no national VAT system, return 0 and mark as correct
+- If evidence from search results is weak, conflicting or unclear, return needs_review rather than guessing
+- Use only the national/federal standard rate, not regional or provincial variations
+- Return JSON only, no markdown, no explanation outside the JSON
 
 JSON format:
 {
     "current_rate": <number>,
-    "confidence": "high" | "medium" | "low",
+    "confidence": "high" | "medium" | "low" | "needs_review",
     "source_note": "<brief explanation of where this rate comes from>",
     "is_calculated": false
 }"""
@@ -267,10 +271,24 @@ if st.session_state.entries:
         delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
                                         help="Delay between API calls to avoid rate limits.")
 
-    # All entries get validated — no territory is skipped
-    entries_to_validate = st.session_state.entries.copy()
+    _TEST_MODE_CODES = [
+        "DE", "FR", "SE", "JP", "AU", "NZ", "EE", "ID", "IL", "EC",
+        "SG", "HK", "BM", "QA", "RU", "BR", "IN", "CA", "GP", "MQ",
+        "RE", "NC", "AI", "CM", "MW", "BB", "US", "KW", "IQ",
+    ]
 
-    st.info(f"Will validate all **{len(entries_to_validate)}** countries — no territories skipped")
+    test_mode = st.checkbox("Test Mode", value=True)
+
+    if test_mode:
+        _code_order = {code: i for i, code in enumerate(_TEST_MODE_CODES)}
+        entries_to_validate = sorted(
+            [e for e in st.session_state.entries if e.iso_code in _code_order],
+            key=lambda e: _code_order[e.iso_code],
+        )
+        st.warning("⚠️ Test mode — validating 29 countries (edge cases + representative sample). Uncheck to run all 185.")
+    else:
+        entries_to_validate = st.session_state.entries.copy()
+        st.info(f"Will validate all **{len(entries_to_validate)}** countries — no territories skipped")
 
     if st.button("🔍 Start Validation Scan", use_container_width=True):
         st.session_state.scan_running = True
