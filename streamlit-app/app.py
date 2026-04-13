@@ -254,7 +254,7 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
 
     try:
         response = client.chat.completions.create(
-            model="deepseek/deepseek-v3.2",
+            model="qwen/qwen3.5-plus",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
