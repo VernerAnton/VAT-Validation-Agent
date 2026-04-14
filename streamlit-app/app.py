@@ -757,7 +757,7 @@ if st.session_state.validation_results and st.session_state.get("test_mode", Fal
             # ── Raw LLM response ──────────────────────────────────────────
             raw = st.session_state.raw_llm_responses.get(iso, "")
             if raw:
-                with st.expander("Raw LLM response", expanded=False):
+                if st.toggle("Show raw LLM response", value=False, key=f"raw_{iso}"):
                     st.code(raw, language="json")
 
 # ─── Phase 4: Export ──────────────────────────────────────────────────────────
