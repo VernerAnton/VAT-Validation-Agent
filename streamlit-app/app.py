@@ -227,29 +227,32 @@ Rules:
 - If a country has no national VAT system, set standard_rate to 0 and needs_human_review to false
 - If evidence is weak, conflicting or unclear, set needs_human_review to true instead of guessing
 - If a country has GST instead of VAT, use that rate
-- Return JSON only — no markdown, no explanation outside the JSON
 
-You MUST reason before committing to a number. Output fields in this exact order
-(reasoning fields first, answer fields last):
+Return ONLY valid JSON in this exact structure, no markdown, no extra text:
 
 {{
   "sources_analyzed": [
-    {
-      "url": "<source URL>",
-      "source_type": "<government | big4 | supranational | research | news | blog | other>",
-      "claimed_rate": <number or null>,
-      "direct_quote": "<relevant excerpt from this source, max 80 words>",
-      "publication_date": "<date string or 'unknown'>"
-    }
+    {{
+      "url": "https://example.com",
+      "claimed_rate": 20.0,
+      "direct_quote": "the standard VAT rate is 20 percent",
+      "source_type": "government",
+      "publication_date": "2026-01-01"
+    }}
   ],
-  "source_agreement": "all_agree" | "majority_agree" | "conflicting",
-  "temporal_notes": "<caveats about source dates or reform timelines, or empty string>",
-  "reasoning": "<step-by-step reasoning referencing specific sources>",
-  "standard_rate": <number>,
-  "confidence_score": <0.0 to 1.0>,
-  "needs_human_review": <true or false>,
-  "review_reason": "<why review is needed, or empty string>"
-}}"""
+  "source_agreement": "all_agree",
+  "temporal_notes": "no recent changes found",
+  "reasoning": "Multiple authoritative sources confirm the rate",
+  "standard_rate": 20.0,
+  "confidence_score": 0.95,
+  "needs_human_review": false,
+  "review_reason": null
+}}
+
+Valid values for source_type: government, accounting_firm, supranational, news, blog
+Valid values for source_agreement: all_agree, majority_agree, conflicting, insufficient
+confidence_score must be a number between 0.0 and 1.0
+If a field has no value use null, never use empty string for optional fields"""
 
     user_prompt = f"""Today's date: {today}
 Country: {country_name} ({iso_code})
@@ -262,6 +265,7 @@ Search results:
 
 Determine the current standard VAT/GST rate for {country_name}. Return JSON only."""
 
+    raw_content = ""
     try:
         response = client.chat.completions.create(
             model="qwen/qwen3.5-plus",
@@ -270,30 +274,43 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=1500,
         )
-        content = response.choices[0].message.content or "{}"
-        # Strip markdown code fences if present
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1] if "\n" in content else content
-            content = content.rsplit("```", 1)[0]
-            content = content.strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
-        parsed = json.loads(content)
-        return parsed, content
+        raw_content = response.choices[0].message.content or "{}"
     except Exception as e:
         return {
             "sources_analyzed": [],
             "source_agreement": "conflicting",
             "temporal_notes": "",
-            "reasoning": f"LLM error: {str(e)}",
+            "reasoning": f"API call failed: {str(e)}",
             "standard_rate": stored_rate,
             "confidence_score": 0.0,
             "needs_human_review": True,
-            "review_reason": f"LLM call failed: {str(e)[:100]}",
-        }, ""
+            "review_reason": f"API call failed: {str(e)[:100]}",
+        }, raw_content
+
+    # Strip markdown code fences if present
+    content = raw_content.strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else content
+        content = content.rsplit("```", 1)[0].strip()
+        if content.startswith("json"):
+            content = content[4:].strip()
+
+    try:
+        parsed = json.loads(content)
+        return parsed, raw_content
+    except json.JSONDecodeError as e:
+        return {
+            "sources_analyzed": [],
+            "source_agreement": "conflicting",
+            "temporal_notes": "",
+            "reasoning": f"JSON parse error: {str(e)} — raw response: {content[:300]}",
+            "standard_rate": stored_rate,
+            "confidence_score": 0.0,
+            "needs_human_review": True,
+            "review_reason": f"JSON parse failed: {str(e)[:100]}",
+        }, raw_content
 
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
