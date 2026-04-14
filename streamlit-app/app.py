@@ -268,7 +268,7 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
     raw_content = ""
     try:
         response = client.chat.completions.create(
-            model="qwen/qwen3.5-plus",
+            model="qwen/qwen3.6-plus:free",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
