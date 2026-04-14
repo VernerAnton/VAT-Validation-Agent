@@ -77,6 +77,8 @@ if "scan_progress" not in st.session_state:
     st.session_state.scan_progress = 0
 if "logs" not in st.session_state:
     st.session_state.logs = []
+if "raw_llm_responses" not in st.session_state:
+    st.session_state.raw_llm_responses = {}
 
 # Known special/calculated rates — annotate but still validate
 SPECIAL_RATES = {
@@ -209,8 +211,8 @@ def analyze_vat_with_llm(
     stored_rate: float,
     search_results: str,
     today: str,
-) -> dict:
-    """Ask DeepSeek to analyze the search results and determine the correct VAT rate."""
+) -> tuple[dict, str]:
+    """Ask the LLM to analyze search results and return (parsed_dict, raw_json_string)."""
     client = get_deepseek_client()
 
     # Build source-tier annotation for the user prompt
@@ -231,7 +233,15 @@ You MUST reason before committing to a number. Output fields in this exact order
 (reasoning fields first, answer fields last):
 
 {{
-  "sources_analyzed": ["<url or description>", ...],
+  "sources_analyzed": [
+    {
+      "url": "<source URL>",
+      "source_type": "<government | big4 | supranational | research | news | blog | other>",
+      "claimed_rate": <number or null>,
+      "direct_quote": "<relevant excerpt from this source, max 80 words>",
+      "publication_date": "<date string or 'unknown'>"
+    }
+  ],
   "source_agreement": "all_agree" | "majority_agree" | "conflicting",
   "temporal_notes": "<caveats about source dates or reform timelines, or empty string>",
   "reasoning": "<step-by-step reasoning referencing specific sources>",
@@ -271,7 +281,8 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
             content = content.strip()
             if content.startswith("json"):
                 content = content[4:].strip()
-        return json.loads(content)
+        parsed = json.loads(content)
+        return parsed, content
     except Exception as e:
         return {
             "sources_analyzed": [],
@@ -282,7 +293,7 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
             "confidence_score": 0.0,
             "needs_human_review": True,
             "review_reason": f"LLM call failed: {str(e)[:100]}",
-        }
+        }, ""
 
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -394,7 +405,7 @@ if st.session_state.entries:
         "RE", "NC", "AI", "CM", "MW", "BB", "US", "KW", "IQ",
     ]
 
-    test_mode = st.checkbox("Test Mode", value=True)
+    test_mode = st.checkbox("Test Mode", value=True, key="test_mode")
 
     if test_mode:
         _code_order = {code: i for i, code in enumerate(_TEST_MODE_CODES)}
@@ -436,11 +447,12 @@ if st.session_state.entries:
                 search_results = _search_country(search_client, entry, _year)
                 circular = _has_circular_sourcing(search_results)
 
-                # Step 2: Analyze with DeepSeek (reasoning-first schema)
-                add_log(f"Analyzing: {entry.name} with DeepSeek")
-                analysis = analyze_vat_with_llm(
+                # Step 2: Analyze with LLM (reasoning-first schema)
+                add_log(f"Analyzing: {entry.name} with LLM")
+                analysis, raw_response = analyze_vat_with_llm(
                     entry.name, entry.iso_code, entry.vat_rate, search_results, _today
                 )
+                st.session_state.raw_llm_responses[entry.iso_code] = raw_response
 
                 current_rate = float(analysis.get("standard_rate", entry.vat_rate))
                 confidence_score = float(analysis.get("confidence_score", 0.0))
@@ -496,6 +508,7 @@ if st.session_state.entries:
                     "is_calculated": analysis.get("is_calculated", False),
                     "rate_diff": rate_diff,
                     # Extended fields
+                    "sources_analyzed": analysis.get("sources_analyzed", []),
                     "confidence_score": confidence_score,
                     "confidence_tier": confidence_tier,
                     "needs_human_review": needs_review,
@@ -512,6 +525,7 @@ if st.session_state.entries:
 
             except Exception as e:
                 add_log(f"ERROR validating {entry.iso_code} {entry.name}: {e}")
+                st.session_state.raw_llm_responses[entry.iso_code] = ""
                 st.session_state.validation_results[entry.iso_code] = {
                     "iso_code": entry.iso_code,
                     "country": entry.name,
@@ -522,6 +536,7 @@ if st.session_state.entries:
                     "source_note": f"Validation error: {str(e)[:100]}",
                     "is_calculated": False,
                     "rate_diff": 0,
+                    "sources_analyzed": [],
                     "confidence_score": 0.0,
                     "confidence_tier": "escalate",
                     "needs_human_review": True,
@@ -639,6 +654,94 @@ if st.session_state.validation_results:
             for v in sorted(matches.values(), key=lambda x: x["country"])
         ]
         st.dataframe(match_data, use_container_width=True, hide_index=True)
+
+# ─── Reasoning Diary (test mode only) ────────────────────────────────────────
+
+_DIARY_CODES = [
+    "DE", "FR", "SE", "JP", "AU", "NZ", "EE", "ID", "IL", "EC",
+    "SG", "HK", "BM", "QA", "RU", "BR", "IN", "CA", "GP", "MQ",
+    "RE", "NC", "AI", "CM", "MW", "BB", "US", "KW", "IQ",
+]
+
+if st.session_state.validation_results and st.session_state.get("test_mode", False):
+    st.header("🔍 Agent Reasoning Diary")
+    st.caption("Full LLM reasoning trace for each validated country. Visible in test mode only.")
+
+    diary_isos = [c for c in _DIARY_CODES if c in st.session_state.validation_results]
+
+    for iso in diary_isos:
+        data = st.session_state.validation_results[iso]
+        score = data.get("confidence_score", 0.0)
+
+        color_icon = "🟢" if score >= 0.9 else ("🟡" if score >= 0.7 else "🔴")
+        review_tag = "  ⚠️ review flagged" if data.get("needs_human_review") else ""
+        expander_label = f"{color_icon} {data['country']} ({iso}) — confidence {score:.2f}{review_tag}"
+
+        with st.expander(expander_label, expanded=False):
+
+            # ── Sources analyzed ──────────────────────────────────────────
+            sources = data.get("sources_analyzed", [])
+            if sources:
+                st.subheader("Sources Analyzed")
+                for src in sources:
+                    if isinstance(src, dict):
+                        url = src.get("url", "—")
+                        s_type = src.get("source_type", "—")
+                        claimed = src.get("claimed_rate")
+                        quote = src.get("direct_quote", "")
+                        pub_date = src.get("publication_date", "unknown")
+                        weight = _tier_weight(url) if url.startswith("http") else _BLOG_WEIGHT
+                        claimed_str = f"{claimed}%" if claimed is not None else "—"
+                        st.markdown(
+                            f"**{url}**  \n"
+                            f"Type: `{s_type}` &nbsp;·&nbsp; "
+                            f"Claimed rate: `{claimed_str}` &nbsp;·&nbsp; "
+                            f"Published: `{pub_date}` &nbsp;·&nbsp; "
+                            f"Tier weight: `{weight:.2f}`"
+                        )
+                        if quote:
+                            st.caption(f"> {quote}")
+                        st.divider()
+                    else:
+                        st.write(f"• {src}")
+            else:
+                st.caption("No sources recorded.")
+
+            # ── Source agreement ──────────────────────────────────────────
+            agreement = data.get("source_agreement", "—")
+            agreement_display = {
+                "all_agree":      "✅ All sources agree",
+                "majority_agree": "🟡 Majority agree",
+                "conflicting":    "❌ Sources conflicting",
+                "insufficient":   "⚠️ Insufficient sources",
+            }.get(agreement, f"— {agreement}")
+            st.write(f"**Source Agreement:** {agreement_display}")
+
+            # ── Temporal notes ────────────────────────────────────────────
+            if data.get("temporal_notes"):
+                st.write(f"**Temporal Notes:** {data['temporal_notes']}")
+
+            # ── Full reasoning ────────────────────────────────────────────
+            if data.get("reasoning"):
+                st.write("**Reasoning:**")
+                st.info(data["reasoning"])
+
+            # ── Confidence score with visual bar ──────────────────────────
+            filled = min(int(round(score * 10)), 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            st.write(f"**Confidence Score:** {score:.2f}  `{bar}`")
+
+            # ── Human review flag ─────────────────────────────────────────
+            if data.get("needs_human_review"):
+                st.error(f"🔴 Human review required — {data.get('review_reason', '—')}")
+            else:
+                st.success("✅ No human review required")
+
+            # ── Raw LLM response ──────────────────────────────────────────
+            raw = st.session_state.raw_llm_responses.get(iso, "")
+            if raw:
+                with st.expander("Raw LLM response", expanded=False):
+                    st.code(raw, language="json")
 
 # ─── Phase 4: Export ──────────────────────────────────────────────────────────
 
