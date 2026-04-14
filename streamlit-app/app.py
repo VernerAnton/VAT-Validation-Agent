@@ -14,6 +14,7 @@ import os
 import re
 import json
 import time
+import traceback
 import urllib.parse
 from datetime import datetime
 import streamlit as st
@@ -79,6 +80,10 @@ if "logs" not in st.session_state:
     st.session_state.logs = []
 if "raw_llm_responses" not in st.session_state:
     st.session_state.raw_llm_responses = {}
+if "current_log_file" not in st.session_state:
+    st.session_state.current_log_file = ""
+if "scan_log_buffer" not in st.session_state:
+    st.session_state.scan_log_buffer = ""
 
 # Known special/calculated rates — annotate but still validate
 SPECIAL_RATES = {
@@ -179,7 +184,12 @@ def _has_circular_sourcing(search_results: str) -> bool:
     return not (has_authoritative or has_secondary)
 
 
-def _search_country(search_client: McpClient, entry: CountryEntry, year: str) -> str:
+def _search_country(
+    search_client: McpClient,
+    entry: CountryEntry,
+    year: str,
+    log_fn=None,
+) -> str:
     """Run three targeted queries for a country and return combined results."""
     meta = COUNTRY_META.get(entry.iso_code)
     if meta:
@@ -197,12 +207,32 @@ def _search_country(search_client: McpClient, entry: CountryEntry, year: str) ->
         ("PwC Tax Summaries", q_b),
         ("Local language / general", q_c),
     ]:
+        if log_fn:
+            log_fn(f"QUERY | {entry.iso_code} | {label} | {q}")
         try:
             result = search_client.call_tool("search_web", {"query": q})
+            if log_fn:
+                _n_urls = len(re.findall(r'URL:\s*(https?://\S+)', result))
+                log_fn(f"RESULT | {entry.iso_code} | {label} | urls={_n_urls} | len={len(result)}")
             parts.append(f"[{label} — query: {q}]\n{result}")
         except Exception as e:
+            if log_fn:
+                log_fn(f"QUERY FAILED | {entry.iso_code} | {label} | {e}")
             parts.append(f"[{label} — FAILED: {e}]")
     return "\n\n".join(parts)
+
+
+def _sandbox_log(sandbox_client: McpClient, msg: str) -> None:
+    """Append a timestamped entry to the in-memory buffer and sync to sandbox."""
+    ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    st.session_state.scan_log_buffer += f"[{ts}] {msg}\n"
+    try:
+        sandbox_client.call_tool("write_draft", {
+            "filename": st.session_state.current_log_file,
+            "content": st.session_state.scan_log_buffer,
+        })
+    except Exception:
+        pass  # Never let log I/O break the scan
 
 
 def analyze_vat_with_llm(
@@ -352,6 +382,41 @@ with st.sidebar:
         for log in st.session_state.logs[-50:]:
             st.text(log)
 
+    st.divider()
+    st.subheader("📋 Scan Logs")
+    if st.session_state.current_log_file:
+        st.caption(f"Current: `{st.session_state.current_log_file}`")
+
+    if st.button("📋 View Scan Logs", key="view_logs_btn"):
+        try:
+            _sb = McpClient(sandbox_url)
+            raw_list = _sb.call_tool("list_drafts", {})
+            all_files = [ln.strip() for ln in raw_list.splitlines() if ln.strip()]
+            log_files = sorted(
+                [f for f in all_files if f.startswith("scan_log_")],
+                reverse=True,
+            )
+            st.session_state._log_file_list = log_files
+        except Exception as e:
+            st.error(f"Failed to list logs: {str(e)[:80]}")
+
+    _log_files = st.session_state.get("_log_file_list", [])
+    if _log_files:
+        _selected = st.selectbox("Select log", _log_files, key="log_file_select")
+        if st.button("Load log", key="load_log_btn"):
+            try:
+                _sb = McpClient(sandbox_url)
+                _content = _sb.call_tool("read_draft", {"filename": _selected})
+                st.session_state._loaded_log_content = _content
+                st.session_state._loaded_log_name = _selected
+            except Exception as e:
+                st.error(f"Failed to load: {str(e)[:80]}")
+        if st.session_state.get("_loaded_log_content"):
+            st.caption(st.session_state.get("_loaded_log_name", ""))
+            st.code(st.session_state._loaded_log_content, language="text")
+    elif st.session_state.get("_log_file_list") is not None:
+        st.info("No scan log files found on sandbox server.")
+
 # ─── Main UI ──────────────────────────────────────────────────────────────────
 
 st.title("🌐 VAT Validation Agent")
@@ -443,9 +508,21 @@ if st.session_state.entries:
         progress_bar = st.progress(0, text="Starting validation scan...")
         results_placeholder = st.empty()
 
+        # ── Persistent log setup ──────────────────────────────────────────
+        _log_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        st.session_state.current_log_file = f"scan_log_{_log_ts}.txt"
+        st.session_state.scan_log_buffer = ""
+        _log_sb = McpClient(sandbox_url)
+        _slog = lambda msg: _sandbox_log(_log_sb, msg)
+
         _today = datetime.now().strftime("%d %B %Y")
         _year = datetime.now().strftime("%Y")
         total = len(entries_to_validate)
+        _slog(
+            f"SCAN STARTED | countries={total}"
+            f" | test_mode={st.session_state.get('test_mode', False)}"
+            f" | model=qwen/qwen3.6-plus:free"
+        )
         for i, entry in enumerate(entries_to_validate):
             progress_pct = (i + 1) / total
             progress_bar.progress(progress_pct, text=f"Validating {entry.name} ({entry.iso_code}) — {i+1}/{total}")
@@ -455,21 +532,36 @@ if st.session_state.entries:
                 add_log(f"Skipped {entry.iso_code} {entry.name} (already validated)")
                 continue
 
+            _slog(f"COUNTRY START | {entry.iso_code} | {entry.name}")
+
             # Check if it's a special rate
             special = SPECIAL_RATES.get(entry.iso_code)
 
             try:
                 # Step 1: Three targeted searches per country
                 add_log(f"Searching (3 queries): {entry.name} ({entry.iso_code})")
-                search_results = _search_country(search_client, entry, _year)
+                search_results = _search_country(search_client, entry, _year, log_fn=_slog)
                 circular = _has_circular_sourcing(search_results)
 
                 # Step 2: Analyze with LLM (reasoning-first schema)
                 add_log(f"Analyzing: {entry.name} with LLM")
+                _slog(
+                    f"LLM CALL | {entry.iso_code}"
+                    f" | model=qwen/qwen3.6-plus:free"
+                    f" | search_len={len(search_results)}"
+                )
                 analysis, raw_response = analyze_vat_with_llm(
                     entry.name, entry.iso_code, entry.vat_rate, search_results, _today
                 )
                 st.session_state.raw_llm_responses[entry.iso_code] = raw_response
+                _parse_ok = bool(raw_response) and not analysis.get("reasoning", "").startswith(
+                    ("JSON parse error", "API call failed")
+                )
+                _slog(
+                    f"LLM RESPONSE | {entry.iso_code}"
+                    f" | raw_len={len(raw_response)}"
+                    f" | parsed={'OK' if _parse_ok else 'ERROR'}"
+                )
 
                 current_rate = float(analysis.get("standard_rate", entry.vat_rate))
                 confidence_score = float(analysis.get("confidence_score", 0.0))
@@ -540,8 +632,18 @@ if st.session_state.entries:
                 else:
                     add_log(f"✗ {entry.iso_code} {entry.name}: stored={entry.vat_rate}% found={current_rate}% (score={confidence_score:.2f})")
 
+                _outcome = "match" if is_match else ("review" if needs_review else "mismatch")
+                _slog(
+                    f"COUNTRY DONE | {entry.iso_code} | {entry.name}"
+                    f" | outcome={_outcome}"
+                    f" | score={confidence_score:.2f}"
+                    f" | stored={entry.vat_rate}% | found={current_rate}%"
+                )
+
             except Exception as e:
+                _tb = traceback.format_exc()
                 add_log(f"ERROR validating {entry.iso_code} {entry.name}: {e}")
+                _slog(f"EXCEPTION | {entry.iso_code} | {entry.name} | {str(e)} | traceback={_tb[:600]}")
                 st.session_state.raw_llm_responses[entry.iso_code] = ""
                 st.session_state.validation_results[entry.iso_code] = {
                     "iso_code": entry.iso_code,
@@ -565,6 +667,7 @@ if st.session_state.entries:
 
             time.sleep(delay_between)
 
+        _slog(f"SCAN COMPLETED | validated={len(st.session_state.validation_results)}")
         progress_bar.progress(1.0, text="Validation complete!")
         st.session_state.scan_complete = True
         st.session_state.scan_running = False
