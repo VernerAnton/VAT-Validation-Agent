@@ -482,9 +482,7 @@ if st.session_state.entries:
                                         help="Delay between API calls to avoid rate limits.")
 
     _TEST_MODE_CODES = [
-        "DE", "FR", "SE", "JP", "AU", "NZ", "EE", "ID", "IL", "EC",
-        "SG", "HK", "BM", "QA", "RU", "BR", "IN", "CA", "GP", "MQ",
-        "RE", "NC", "AI", "CM", "MW", "BB", "US", "KW", "IQ",
+        "DE", "FR", "EE", "ID", "MW", "MQ", "GP", "RU", "BR", "HK", "US", "AI",
     ]
 
     test_mode = st.checkbox("Test Mode", value=True, key="test_mode")
@@ -495,7 +493,7 @@ if st.session_state.entries:
             [e for e in st.session_state.entries if e.iso_code in _code_order],
             key=lambda e: _code_order[e.iso_code],
         )
-        st.warning("⚠️ Test mode — validating 29 countries (edge cases + representative sample). Uncheck to run all 185.")
+        st.warning("⚠️ Test mode — validating 12 countries (representative sample). Uncheck to run all 185.")
     else:
         entries_to_validate = st.session_state.entries.copy()
         st.info(f"Will validate all **{len(entries_to_validate)}** countries — no territories skipped")
@@ -778,9 +776,7 @@ if st.session_state.validation_results:
 # ─── Reasoning Diary (test mode only) ────────────────────────────────────────
 
 _DIARY_CODES = [
-    "DE", "FR", "SE", "JP", "AU", "NZ", "EE", "ID", "IL", "EC",
-    "SG", "HK", "BM", "QA", "RU", "BR", "IN", "CA", "GP", "MQ",
-    "RE", "NC", "AI", "CM", "MW", "BB", "US", "KW", "IQ",
+    "DE", "FR", "EE", "ID", "MW", "MQ", "GP", "RU", "BR", "HK", "US", "AI",
 ]
 
 if st.session_state.validation_results and st.session_state.get("test_mode", False):
