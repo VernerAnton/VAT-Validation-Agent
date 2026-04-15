@@ -1,0 +1,365 @@
+# VAT Validation Agent — Code Audit Findings
+
+## Summary
+
+I reviewed all files across the four services (file-vault-server, websearch-server, sandbox-server, streamlit-app). Below are the problems found, categorized by severity.
+
+> **📝 Peer Review (2026-04-15):** This document has been peer-reviewed against the actual source code. Severity adjustments, corrections, and additional missed issues are marked with "**Review note:**" throughout. A consolidated review summary is at the bottom.
+
+---
+
+## 🔴 Critical Issues (Will Cause Runtime Failures)
+
+### 1. Missing `zod` dependency in `websearch-server`
+
+**File:** [`websearch-server/package.json`](websearch-server/package.json:11)
+
+**Problem:** `websearch-server/src/index.ts` imports `zod` at line 5 (`import { z } from 'zod'`), but `zod` is **not listed** in `websearch-server/package.json` dependencies. It only exists as a devDependency transitively through `@modelcontextprotocol/sdk`.
+
+**Impact:** When deployed to Railway (production `npm start`), the `node_modules` are built from `dependencies` only. If `zod` is not hoisted as a transitive dependency, the server will crash at startup with `Cannot find module 'zod'`.
+
+**Fix:** Add `"zod": "^3.23.8"` to `websearch-server/package.json` dependencies (same as sandbox-server).
+
+> **Review note — severity downgrade to 🟡 Moderate:** `zod` is a direct (non-dev) dependency of `@modelcontextprotocol/sdk`, so npm *will* hoist it into `node_modules` in production. This won't crash today. The real risk is future npm hoisting changes or SDK dependency changes. Still a legitimate fix for dependency hygiene, but "Will Cause Runtime Failures" is overstated.
+
+---
+
+### 2. MCP Client Sends 3 HTTP Requests Per Tool Call
+
+**File:** [`streamlit-app/mcp_client.py`](streamlit-app/mcp_client.py:52)
+
+**Problem:** The `_call()` method sends **three separate HTTP POST requests** for every single tool/resource call:
+1. `initialize` (id=1)
+2. `notifications/initialized` (no id, notification)
+3. The actual method call (id=2)
+
+For 185 countries × 3 search queries each = 555 search calls, this means **1,665 HTTP requests** just for initialization overhead, plus 555 actual tool calls. Each request also gets its own `httpx.Client` context.
+
+**Impact:** 
+- **3× more latency** than necessary (each country validation involves 3× the HTTP round trips)
+- **3× more load** on Railway servers
+- The `initialize` + `initialized` pattern is designed for stateful MCP sessions. In stateless mode (which these servers use), the server creates a fresh `McpServer` per POST request, so the initialize call has **no effect** on the subsequent actual call. It's wasted traffic.
+
+**Fix:** Either:
+- (a) Remove the initialize/initialized calls entirely for stateless servers, or
+- (b) Batch initialize + actual call into a single request if the server supports it
+
+> **Review note — confirmed ✅:** All three servers use `sessionIdGenerator: undefined` (stateless mode) and create a fresh `McpServer` per POST. The `initialize` and `initialized` calls go to server instances that are immediately discarded — they have zero effect on the third POST that carries the actual method call. The 3× multiplier math is accurate. While the MCP Streamable HTTP spec technically requires initialization, there's no session continuity between the three POSTs in stateless mode, making it pointless.
+
+---
+
+### 3. `file-vault-server` Missing `zod` Dependency
+
+**File:** [`file-vault-server/package.json`](file-vault-server/package.json:11)
+
+**Problem:** Same issue as websearch-server. `file-vault-server/src/index.ts` imports `zod` at line 7 (`import { z } from 'zod'`), but `zod` is not in the `dependencies` list.
+
+**Impact:** Same as issue #1 — potential crash on Railway deployment.
+
+**Fix:** Add `"zod": "^3.23.8"` to `file-vault-server/package.json` dependencies.
+
+> **Review note — severity downgrade to 🟡 Moderate:** Same reasoning as issue #1. Works today via transitive hoisting; still should be fixed for correctness.
+
+---
+
+## 🟡 Moderate Issues (May Cause Problems)
+
+### 4. `sandbox-server` Uses `zod/v3` Import Path
+
+**File:** [`sandbox-server/src/index.ts`](sandbox-server/src/index.ts:8)
+
+**Problem:** Line 8 imports from `zod/v3`:
+```typescript
+import { z } from 'zod/v3';
+```
+
+This is a compatibility import path that may not exist in all versions of zod. The comment says "Import from zod/v3 for compatibility with the MCP SDK's internal zod-compat layer", but this is fragile and version-dependent.
+
+**Impact:** If `@modelcontextprotocol/sdk` updates its internal zod requirements, this import path could break.
+
+**Fix:** Use standard `import { z } from 'zod'` and ensure the zod version in package.json is compatible with the MCP SDK.
+
+> **Review note — severity upgrade to 🔴 Critical:** This is more dangerous than originally assessed. [`sandbox-server/package.json`](sandbox-server/package.json:15) pins `"zod": "^3.23.8"` — but `zod/v3` as a subpath export is a **zod v4+ feature** (it exists so zod v4 consumers can access the v3-compatible API). In zod 3.x, the `zod/v3` subpath does not exist. This import only works today because the MCP SDK internally bundles or re-exports it. If the SDK changes its internal bundling, this will break immediately. Should be changed to `import { z } from 'zod'` and the zod version should be verified for SDK compatibility.
+
+---
+
+### 5. No `requirements.txt` Pin for `streamlit-app` Python Version
+
+**File:** [`streamlit-app/requirements.txt`](streamlit-app/requirements.txt:1)
+
+**Problem:** The `requirements.txt` has no `python_version` constraint. Railway's nixpacks will pick whatever Python version is available, which could be incompatible with the pinned package versions.
+
+**Impact:** Potential dependency resolution failures on Railway.
+
+**Fix:** Add a `runtime.txt` or `nixpacks.toml` specifying Python 3.11+.
+
+> **Review note — confirmed ✅**
+
+---
+
+### 6. `_search_country` Creates New McpClient Per Batch, Not Per Country
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:505)
+
+**Problem:** At line 505, `search_client = McpClient(websearch_url)` is created once before the loop. However, inside `_search_country()` at line 213, `search_client.call_tool()` is called, which internally creates a new `httpx.Client` and sends 3 HTTP requests each time (see issue #2).
+
+**Impact:** The `McpClient` instance is reused but provides no connection pooling benefit since each `_call()` creates its own `httpx.Client`.
+
+> **Review note — confirmed ✅**
+
+---
+
+### 7. `st.rerun()` Called Inside Loop in Bulk Actions
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:699-707)
+
+**Problem:** The "Approve All" and "Reject All" buttons iterate through all mismatches and call `st.rerun()` after each iteration. However, `st.rerun()` is called **inside** the loop, meaning only the first item gets processed before the page reruns.
+
+Wait — actually looking more carefully, `st.rerun()` is called **after** the loop completes (line 702 and 707 are after the `for` loop). This is correct.
+
+**Status:** NOT A BUG — false alarm on initial review.
+
+> **Review note — confirmed ✅:** The indentation in the source confirms `st.rerun()` is outside the `for` loop at both lines 702 and 707. Correct self-correction.
+
+---
+
+### 8. `format_rate` Used on Float Values in Review UI
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:715-717)
+
+**Problem:** Lines 715-717 call `format_rate()` on `data['stored_rate']`, `data['found_rate']`, and `data['rate_diff']`. These values come from the `validation_results` dict where they are stored as Python `float`. The `format_rate()` function in [`vba_parser.py`](streamlit-app/vba_parser.py:69) is designed for VBA output formatting, not UI display.
+
+**Impact:** Works correctly but is semantically misused. `format_rate(0.0)` returns `"0"` which is fine for display.
+
+**Status:** NOT A BUG — works correctly, just a design concern.
+
+> **Review note — confirmed ✅:** [`format_rate()`](streamlit-app/vba_parser.py:69) just strips `.0` from integers and uses `f"{rate:g}"` for floats. Perfectly fine for UI display.
+
+---
+
+### 9. `scan_log_buffer` Grows Unbounded During Scan
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:228)
+
+**Problem:** The `_sandbox_log()` function appends to `st.session_state.scan_log_buffer` which grows for the entire duration of the scan. For 185 countries with 3 queries each plus LLM calls, this could be 1000+ log entries. Each sync to sandbox rewrites the entire buffer.
+
+**Impact:** 
+- Increasingly slow sandbox writes as scan progresses
+- Potential memory issues for very large scans
+
+**Fix:** Consider appending-only writes or periodic flushes.
+
+> **Review note — confirmed ✅, but impact is overstated:** For the actual data sizes (text log lines, ~925 entries for 185 countries), memory won't be an issue. The real concern is O(n²) I/O — each of the ~925 sandbox writes sends progressively more data. Still worth fixing but won't cause crashes.
+
+---
+
+### 10. `computeLCS` O(n×m) Memory Issue for Large Files
+
+**File:** [`sandbox-server/src/index.ts`](sandbox-server/src/index.ts:191-228)
+
+**Problem:** The `computeLCS` function creates a 2D array `dp[m+1][n+1]`. For files with many lines, this can consume significant memory. The fallback at line 196 checks `m * n > 1_000_000` but the VBA database file has ~185 lines, so `185 * 185 = 34,225` which is fine.
+
+**Status:** NOT A BUG for current use case, but the `simpleLCS` fallback is too naive (it just checks if lines exist in both files, losing ordering information).
+
+> **Review note — confirmed ✅:** [`simpleLCS`](sandbox-server/src/index.ts:234) uses `Set.has()` which loses ordering — it's a set intersection, not a subsequence. Correct assessment.
+
+---
+
+## 🟢 Minor Issues (Code Quality / Best Practices)
+
+### 11. Hardcoded Model Name in LLM Call
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:301)
+
+**Problem:** The model is hardcoded to `"qwen/qwen3.6-plus"` in `analyze_vat_with_llm()`. There's no way to change it via UI or environment variable.
+
+**Fix:** Make it configurable via environment variable or UI setting.
+
+> **Review note — confirmed ✅**
+
+---
+
+### 12. `COUNTRY_META` Missing Many Countries
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:94-124)
+
+**Problem:** `COUNTRY_META` only has 32 entries out of 185 countries. Countries not in this dict get generic search queries which are less effective.
+
+**Impact:** Lower quality search results for unmapped countries.
+
+> **Review note — minor correction:** Actual count is **29 entries**, not 32. The impact assessment is correct.
+
+---
+
+### 13. No Error Handling for File Upload Encoding
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:451)
+
+**Problem:** Line 451 does `uploaded.read().decode("utf-8")` without handling `UnicodeDecodeError`. If someone uploads a file with a different encoding (e.g., Windows-1252), it will crash.
+
+**Fix:** Add fallback encoding detection or try/except with alternative encodings.
+
+> **Review note — confirmed ✅**
+
+---
+
+### 14. `file-vault-server` Reads VBA File Synchronously at Startup
+
+**File:** [`file-vault-server/src/index.ts`](file-vault-server/src/index.ts:19)
+
+**Problem:** The VBA file is read once at server startup and stored in memory. If the file is updated on disk, the server needs to be restarted to pick up changes.
+
+**Impact:** This is by design for a "read-only resource" server, but worth noting.
+
+**Status:** NOT A BUG — intentional design.
+
+> **Review note — confirmed ✅**
+
+---
+
+### 15. No Rate Limiting or Retry Logic for Tavily API
+
+**File:** [`websearch-server/src/index.ts`](websearch-server/src/index.ts:40-90)
+
+**Problem:** The `tavilySearch()` function has no retry logic for transient failures and no client-side rate limiting. If Tavily returns 429 (rate limit), it throws an error.
+
+**Impact:** Failed country validations due to transient API errors.
+
+**Fix:** Add exponential backoff retry logic.
+
+> **Review note — confirmed ✅**
+
+---
+
+### 16. `max_tokens=1500` May Be Insufficient for Complex Responses
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:307)
+
+**Problem:** The LLM call uses `max_tokens=1500`. For countries with extensive search results and detailed source analysis, the response could be truncated.
+
+**Impact:** Truncated JSON responses that fail to parse.
+
+> **Review note — confirmed ✅, but low risk in practice:** The requested JSON schema is compact (single country, ~5 sources). 1500 tokens is usually sufficient. Edge cases with very verbose `direct_quote` fields could truncate.
+
+---
+
+## 🔴 Issues Missed by Original Audit
+
+### 17. `file-vault-server` Shares Single `McpServer` Instance Across Requests (Concurrency Bug)
+
+**File:** [`file-vault-server/src/index.ts`](file-vault-server/src/index.ts:29)
+
+**Problem:** The `McpServer` is created **once** at module level (line 29), but [`server.connect(transport)`](file-vault-server/src/index.ts:107) is called on every incoming POST request (line 107). This means the same server instance gets `connect()`ed to multiple transports over its lifetime.
+
+Compare with [`websearch-server/src/index.ts:156`](websearch-server/src/index.ts:156) which correctly creates a **new** `McpServer` per request via `createMcpServer()`.
+
+**Impact:** If two requests arrive concurrently, the shared `McpServer` instance may have its internal transport state corrupted. The SDK's `connect()` method may overwrite the previous transport reference, causing one request to fail or receive the other's response.
+
+**Fix:** Follow the websearch-server pattern — create a new `McpServer` instance per POST request:
+```typescript
+app.post('/mcp', async (req, res) => {
+  const server = createMcpServer(); // new instance per request
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  // ...
+});
+```
+
+**Severity:** 🔴 Critical — can cause silent data corruption under concurrent load.
+
+---
+
+### 18. Qwen Model `<think>` Tags Not Stripped from LLM Response
+
+**File:** [`streamlit-app/app.py`](streamlit-app/app.py:323-328)
+
+**Problem:** The model `qwen/qwen3.6-plus` on OpenRouter may return thinking tokens wrapped in `<think>...</think>` tags within the response content. The JSON parsing code at lines 323-328 strips markdown code fences (```` ``` ````) but does **not** strip `<think>` blocks.
+
+If the model returns:
+```
+<think>Let me analyze the VAT rate for Germany...</think>
+{"standard_rate": 19.0, ...}
+```
+
+The `json.loads()` call will fail with `JSONDecodeError` because the content starts with `<think>`.
+
+**Impact:** Intermittent JSON parse failures depending on whether the model includes thinking tokens. Falls back to the error handler which sets `confidence_score: 0.0` and `needs_human_review: true` — not a crash, but degrades results.
+
+**Fix:** Add `<think>` tag stripping before JSON parsing:
+```python
+# Strip <think>...</think> blocks if present
+content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+```
+
+**Severity:** 🟡 Moderate — causes degraded results, not crashes.
+
+---
+
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    A[Streamlit App] -->|MCP HTTP| B[file-vault-server]
+    A -->|MCP HTTP| C[websearch-server]
+    A -->|MCP HTTP| D[sandbox-server]
+    A -->|OpenAI API| E[OpenRouter]
+    B -->|Reads| F[VAT-Database.txt]
+    C -->|Calls| G[Tavily API]
+    D -->|Reads/Writes| H[workspace dir]
+
+    style A fill:#1a1a2e,color:#fff
+    style B fill:#16213e,color:#fff
+    style C fill:#16213e,color:#fff
+    style D fill:#16213e,color:#fff
+    style E fill:#0f3460,color:#fff
+    style F fill:#533483,color:#fff
+    style G fill:#533483,color:#fff
+    style H fill:#533483,color:#fff
+```
+
+## Priority Fix List (Revised After Peer Review)
+
+| Priority | Issue | Files Affected | Review Status |
+|----------|-------|----------------|---------------|
+| 🔴 Critical | **#17** Shared `McpServer` instance in file-vault-server (concurrency bug) | `file-vault-server/src/index.ts` | **NEW — missed by original audit** |
+| 🔴 Critical | **#2** MCP client sends 3× HTTP requests per call | `streamlit-app/mcp_client.py` | Confirmed ✅ |
+| 🔴 Critical | **#4** `zod/v3` import path — v4 subpath used with v3 dependency | `sandbox-server/src/index.ts` | **Upgraded from 🟡** |
+| 🟡 Moderate | **#1** Missing `zod` in `websearch-server` dependencies | `websearch-server/package.json` | **Downgraded from 🔴** |
+| 🟡 Moderate | **#3** Missing `zod` in `file-vault-server` dependencies | `file-vault-server/package.json` | **Downgraded from 🔴** |
+| 🟡 Moderate | **#18** Qwen `<think>` tags not stripped before JSON parse | `streamlit-app/app.py` | **NEW — missed by original audit** |
+| 🟡 Moderate | **#9** Unbounded log buffer growth (O(n²) I/O) | `streamlit-app/app.py` | Confirmed ✅ |
+| 🟡 Moderate | **#5** No Python version pin | `streamlit-app/` | Confirmed ✅ |
+| 🟡 Moderate | **#6** No connection pooling in McpClient | `streamlit-app/mcp_client.py` | Confirmed ✅ |
+| 🟢 Minor | **#11** Hardcoded model name | `streamlit-app/app.py` | Confirmed ✅ |
+| 🟢 Minor | **#15** No retry logic for Tavily | `websearch-server/src/index.ts` | Confirmed ✅ |
+| 🟢 Minor | **#13** No encoding fallback for uploads | `streamlit-app/app.py` | Confirmed ✅ |
+| 🟢 Minor | **#16** `max_tokens` may be too low | `streamlit-app/app.py` | Confirmed ✅ |
+| 🟢 Minor | **#12** `COUNTRY_META` incomplete (29 of 185) | `streamlit-app/app.py` | Confirmed ✅ (count corrected: 29, not 32) |
+| ⚪ Not a bug | **#7** `st.rerun()` in bulk actions | `streamlit-app/app.py` | Confirmed — false alarm |
+| ⚪ Not a bug | **#8** `format_rate` semantic misuse | `streamlit-app/app.py` | Confirmed — works correctly |
+| ⚪ Not a bug | **#10** `computeLCS` memory | `sandbox-server/src/index.ts` | Confirmed — fine for current use |
+| ⚪ Not a bug | **#14** Sync file read at startup | `file-vault-server/src/index.ts` | Confirmed — intentional design |
+
+---
+
+## Peer Review Summary
+
+**Review date:** 2026-04-15
+**Reviewed against:** All source files in the repository
+
+### Accuracy Assessment
+
+| Category | Count |
+|----------|-------|
+| Findings fully confirmed | 13 of 16 |
+| Severity adjustments needed | 3 (issues #1, #3 downgraded; #4 upgraded) |
+| Issues missed by original audit | 2 (issues #17, #18) |
+| Factual corrections | 1 (issue #12: 29 entries, not 32) |
+
+### Key Takeaways
+
+1. **The audit was largely accurate and well-done.** Self-corrections on issues #7 and #8 demonstrate good rigor.
+2. **The zod dependency issues (#1, #3) were overstated** — they work today via transitive hoisting and are dependency hygiene issues, not runtime crash risks.
+3. **The `zod/v3` import (#4) was understated** — it's a v4 subpath used with a v3 dependency pin, making it more fragile than described.
+4. **Two issues were missed:**
+   - The `file-vault-server` shared `McpServer` instance (#17) is a genuine concurrency bug
+   - The Qwen `<think>` tag issue (#18) can cause intermittent JSON parse failures
