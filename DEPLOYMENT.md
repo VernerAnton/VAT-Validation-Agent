@@ -6,7 +6,7 @@ Complete phase-by-phase deployment to Railway.
 
 - [Railway CLI](https://docs.railway.com/guides/cli) installed and authenticated
 - A [Tavily API key](https://tavily.com/) (free tier gives 1,000 searches/month)
-- A [DeepSeek API key](https://platform.deepseek.com/)
+- An [OpenRouter API key](https://openrouter.ai/)
 - Node.js 20+ and Python 3.11+ (for local testing only)
 
 ---
@@ -30,7 +30,7 @@ Complete phase-by-phase deployment to Railway.
 │                   │  Streamlit App  │                     │
 │                   │  :8501          │                     │
 │                   │  MCP Client +   │                     │
-│                   │  DeepSeek LLM   │                     │
+│                   │  OpenRouter LLM │                     │
 │                   └─────────────────┘                     │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -152,7 +152,7 @@ railway link
 
 # Set environment variables (use the URLs from phases 2-4)
 railway variables set PORT=8501
-railway variables set DEEPSEEK_API_KEY=sk-YOUR-KEY-HERE
+railway variables set OPENROUTER_API_KEY=sk-YOUR-KEY-HERE
 railway variables set FILE_VAULT_URL=https://file-vault-server-production-xxxx.up.railway.app
 railway variables set WEBSEARCH_URL=https://websearch-server-production-xxxx.up.railway.app
 railway variables set SANDBOX_URL=https://sandbox-server-production-xxxx.up.railway.app
@@ -192,7 +192,7 @@ Open the Streamlit URL in your browser. Click "Check All Servers" in the sidebar
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `PORT` | No | `8501` | Streamlit port |
-| `DEEPSEEK_API_KEY` | **Yes** | — | DeepSeek API key |
+| `OPENROUTER_API_KEY` | **Yes** | — | OpenRouter API key |
 | `FILE_VAULT_URL` | **Yes** | `http://localhost:3001` | file-vault-server URL |
 | `WEBSEARCH_URL` | **Yes** | `http://localhost:3002` | websearch-server URL |
 | `SANDBOX_URL` | **Yes** | `http://localhost:3003` | sandbox-server URL |
@@ -220,7 +220,7 @@ npm install && npm run dev
 # Terminal 4 — streamlit-app
 cd streamlit-app
 pip install -r requirements.txt
-export DEEPSEEK_API_KEY=sk-xxx
+export OPENROUTER_API_KEY=sk-xxx
 streamlit run app.py
 ```
 
@@ -238,9 +238,9 @@ streamlit run app.py
 - Use the batch size control in the UI (default 10) to limit concurrent searches
 - The delay slider adds pauses between API calls
 
-### DeepSeek Errors
-- Verify your API key at https://platform.deepseek.com/
-- The app uses `deepseek-chat` model — cheapest option
+### OpenRouter Errors
+- Verify your API key at https://openrouter.ai/
+- The app uses OpenRouter's model selection — choose the best model for your needs
 - Temperature is set to 0.1 for consistent rate extraction
 
 ### VBA Parse Errors

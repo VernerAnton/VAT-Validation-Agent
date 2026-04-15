@@ -5,7 +5,7 @@ Orchestrates the full pipeline:
 1. Fetches VBA file from file-vault-server (MCP resource)
 2. Parses 185 country entries
 3. For each country, searches current VAT rate via websearch-server (MCP tool)
-4. Uses DeepSeek to compare found rate vs stored rate
+4. Uses OpenRouter to compare found rate vs stored rate
 5. Shows diff UI with per-item approve/reject
 6. Writes corrected VBA file via sandbox-server (MCP tool)
 """
@@ -130,7 +130,7 @@ def add_log(msg: str):
     st.session_state.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
 
-def get_deepseek_client() -> OpenAI:
+def get_openrouter_client() -> OpenAI:
     return OpenAI(
         api_key=OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
@@ -243,7 +243,7 @@ def analyze_vat_with_llm(
     today: str,
 ) -> tuple[dict, str]:
     """Ask the LLM to analyze search results and return (parsed_dict, raw_json_string)."""
-    client = get_deepseek_client()
+    client = get_openrouter_client()
 
     # Build source-tier annotation for the user prompt
     urls = re.findall(r'URL:\s*(https?://\S+)', search_results)
@@ -354,9 +354,9 @@ with st.sidebar:
     sandbox_url = st.text_input("Sandbox Server", value=SANDBOX_URL)
 
     st.subheader("LLM")
-    deepseek_key = st.text_input("OpenRouter API Key", value=OPENROUTER_API_KEY, type="password")
-    if deepseek_key:
-        OPENROUTER_API_KEY = deepseek_key
+    openrouter_key = st.text_input("OpenRouter API Key", value=OPENROUTER_API_KEY, type="password")
+    if openrouter_key:
+        OPENROUTER_API_KEY = openrouter_key
 
     st.divider()
 
@@ -470,7 +470,7 @@ if st.session_state.entries:
 
 if st.session_state.entries:
     st.header("Phase 2 — Validate VAT Rates")
-    st.caption("Searches the web for each country's current VAT rate, then uses DeepSeek to compare.")
+    st.caption("Searches the web for each country's current VAT rate, then uses OpenRouter to compare.")
 
     # Batch size control
     col_a, col_b = st.columns([1, 1])
@@ -974,5 +974,5 @@ st.divider()
 st.caption(
     "VAT Validation Agent v1.0 — "
     "MCP Architecture: file-vault-server (Resource) → websearch-server (Tavily) → "
-    "sandbox-server (Drafts) → Streamlit (Orchestrator) → DeepSeek (Reasoning)"
+    "sandbox-server (Drafts) → Streamlit (Orchestrator) → OpenRouter (Reasoning)"
 )
