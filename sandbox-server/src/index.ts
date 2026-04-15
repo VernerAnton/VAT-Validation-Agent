@@ -4,7 +4,12 @@ import fs from 'fs';
 import path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-// Import from zod/v3 for compatibility with the MCP SDK's internal zod-compat layer
+// Import the v3-compatible API via the `zod/v3` subpath. The MCP SDK's
+// type layer (`zod-compat.d.ts`) accepts `zod/v3` or `zod/v4/core` schemas
+// — feeding it the top-level `zod` namespace from zod 3.25+ triggers a
+// `TS2589: Type instantiation is excessively deep` error in `server.tool`.
+// zod 3.25 is a transitional release that ships both APIs under subpaths,
+// so `zod/v3` is guaranteed to exist for `zod@^3.25`.
 import { z } from 'zod/v3';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -295,6 +300,65 @@ function createMcpServer(): McpServer {
             {
               type: 'text' as const,
               text: `Error writing file: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Tool 1b: append_draft — append content to an existing (or new) file.
+  // Used for streaming logs where rewriting the whole file each call is O(n²).
+  server.registerTool(
+    'append_draft',
+    {
+      description: 'Append content to a file in the workspace sandbox directory. Creates the file if it does not exist. Prefer this over write_draft for incremental logs.',
+      inputSchema: {
+        filename: z.string().describe('Name of file to append to in workspace'),
+        content: z.string().describe('Content to append to the file'),
+      },
+    },
+    async ({ filename, content }) => {
+      let filePath: string;
+      try {
+        filePath = safeWorkspacePath(filename);
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+
+        fs.appendFileSync(filePath, content, 'utf8');
+        console.log(`[append_draft] Appended ${content.length} chars to: ${filePath}`);
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Successfully appended ${content.length} characters to: ${filePath}`,
+            },
+          ],
+        };
+      } catch (err) {
+        console.error(`[append_draft] Error appending to file: ${err}`);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error appending to file: ${err instanceof Error ? err.message : String(err)}`,
             },
           ],
           isError: true,

@@ -2,7 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { z } from 'zod';
+// Import from `zod/v3` — the MCP SDK's zod-compat type layer expects
+// zod/v3 or zod/v4/core schemas, and the top-level `zod` namespace in
+// zod 3.25+ causes `TS2589 Type instantiation is excessively deep` in
+// `server.tool()`. zod 3.25 ships both v3 and v4 APIs under subpaths.
+import { z } from 'zod/v3';
 
 // ---------------------------------------------------------------------------
 // Environment validation
@@ -37,24 +41,73 @@ interface TavilyResponse {
 // Tavily search helper
 // ---------------------------------------------------------------------------
 
-async function tavilySearch(query: string): Promise<string> {
-  const response = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      api_key: TAVILY_API_KEY,
-      query,
-      search_depth: 'advanced',
-      max_results: 5,
-      include_answer: true,
-    }),
-  });
+const TAVILY_MAX_RETRIES = 4;
+const TAVILY_BASE_DELAY_MS = 500;
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Tavily API error ${response.status}: ${errorText}`);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function tavilySearch(query: string): Promise<string> {
+  let lastError: Error | null = null;
+  let response: Response | null = null;
+
+  // Retry with exponential backoff on transient failures (network errors,
+  // 429 rate-limits, and 5xx server errors). Client errors (4xx other than
+  // 429) are surfaced immediately — retrying won't help.
+  for (let attempt = 0; attempt < TAVILY_MAX_RETRIES; attempt++) {
+    try {
+      response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          api_key: TAVILY_API_KEY,
+          query,
+          search_depth: 'advanced',
+          max_results: 5,
+          include_answer: true,
+        }),
+      });
+
+      if (response.ok) {
+        break;
+      }
+
+      const retriable = response.status === 429 || response.status >= 500;
+      if (!retriable || attempt === TAVILY_MAX_RETRIES - 1) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        throw new Error(`Tavily API error ${response.status}: ${errorText}`);
+      }
+
+      // Drain the response body before retrying so the connection can close.
+      await response.text().catch(() => '');
+      const delay = TAVILY_BASE_DELAY_MS * Math.pow(2, attempt);
+      console.warn(
+        `[websearch-server] Tavily returned ${response.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${TAVILY_MAX_RETRIES})`
+      );
+      await sleep(delay);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // If the error came from our own throw above (non-retriable HTTP),
+      // re-raise immediately.
+      if (lastError.message.startsWith('Tavily API error ')) {
+        throw lastError;
+      }
+      if (attempt === TAVILY_MAX_RETRIES - 1) {
+        throw lastError;
+      }
+      const delay = TAVILY_BASE_DELAY_MS * Math.pow(2, attempt);
+      console.warn(
+        `[websearch-server] Tavily fetch failed (${lastError.message}), retrying in ${delay}ms (attempt ${attempt + 1}/${TAVILY_MAX_RETRIES})`
+      );
+      await sleep(delay);
+    }
+  }
+
+  if (!response || !response.ok) {
+    throw lastError ?? new Error('Tavily API: exhausted retries');
   }
 
   const data = (await response.json()) as TavilyResponse;
