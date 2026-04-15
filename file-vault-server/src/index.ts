@@ -4,7 +4,6 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { z } from 'zod';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -26,50 +25,58 @@ try {
 
 // ─── Create MCP Server ────────────────────────────────────────────────────────
 
-const server = new McpServer({
-  name: 'file-vault-server',
-  version: '1.0.0',
-});
+// Factory: create a fresh McpServer per incoming request. The stateless
+// Streamable HTTP transport connects to one server instance per POST, so
+// sharing a single instance across concurrent requests can corrupt transport
+// state (the SDK's connect() overwrites the previous transport reference).
+function createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: 'file-vault-server',
+    version: '1.0.0',
+  });
 
-// Register the VBA file as a read-only MCP resource
-// resource(name, uri, metadata, readCallback)
-// ResourceMetadata = Omit<Resource, 'uri' | 'name'> — do NOT include name here
-server.resource(
-  'VAT Database Module 2',
-  'vat-database://module2',
-  {
-    description: 'VBA module containing hardcoded country VAT data for 185 countries (country code, full name, VAT rate).',
-    mimeType: 'text/plain',
-  },
-  async (_uri: URL) => {
-    return {
-      contents: [
-        {
-          uri: 'vat-database://module2',
-          mimeType: 'text/plain',
-          text: fileContent,
-        },
-      ],
-    };
-  }
-);
+  // Register the VBA file as a read-only MCP resource
+  // resource(name, uri, metadata, readCallback)
+  // ResourceMetadata = Omit<Resource, 'uri' | 'name'> — do NOT include name here
+  server.resource(
+    'VAT Database Module 2',
+    'vat-database://module2',
+    {
+      description: 'VBA module containing hardcoded country VAT data for 185 countries (country code, full name, VAT rate).',
+      mimeType: 'text/plain',
+    },
+    async (_uri: URL) => {
+      return {
+        contents: [
+          {
+            uri: 'vat-database://module2',
+            mimeType: 'text/plain',
+            text: fileContent,
+          },
+        ],
+      };
+    }
+  );
 
-// Also register as a tool — some MCP clients prefer tools over resources
-server.tool(
-  'get_vat_file',
-  'Returns the raw content of the VBA VAT database file (Module 2). Contains hardcoded VAT rates for 185 countries.',
-  {},
-  async () => {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: fileContent,
-        },
-      ],
-    };
-  }
-);
+  // Also register as a tool — some MCP clients prefer tools over resources
+  server.tool(
+    'get_vat_file',
+    'Returns the raw content of the VBA VAT database file (Module 2). Contains hardcoded VAT rates for 185 countries.',
+    {},
+    async () => {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: fileContent,
+          },
+        ],
+      };
+    }
+  );
+
+  return server;
+}
 
 // ─── Express App ──────────────────────────────────────────────────────────────
 
@@ -89,10 +96,11 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-// MCP Streamable HTTP — POST (stateless: new transport per request)
+// MCP Streamable HTTP — POST (stateless: new server + transport per request)
 app.post('/mcp', async (req: Request, res: Response) => {
   console.log(`[file-vault-server] POST /mcp — new MCP request`);
 
+  const server = createMcpServer();
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined, // stateless mode
   });

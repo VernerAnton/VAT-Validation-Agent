@@ -28,6 +28,8 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 FILE_VAULT_URL = os.environ.get("FILE_VAULT_URL", "http://localhost:3001")
 WEBSEARCH_URL = os.environ.get("WEBSEARCH_URL", "http://localhost:3002")
 SANDBOX_URL = os.environ.get("SANDBOX_URL", "http://localhost:3003")
+DEFAULT_LLM_MODEL = os.environ.get("LLM_MODEL", "qwen/qwen3.6-plus")
+DEFAULT_LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "3000"))
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 
@@ -82,8 +84,6 @@ if "raw_llm_responses" not in st.session_state:
     st.session_state.raw_llm_responses = {}
 if "current_log_file" not in st.session_state:
     st.session_state.current_log_file = ""
-if "scan_log_buffer" not in st.session_state:
-    st.session_state.scan_log_buffer = ""
 
 # Known special/calculated rates — annotate but still validate
 SPECIAL_RATES = {
@@ -223,13 +223,18 @@ def _search_country(
 
 
 def _sandbox_log(sandbox_client: McpClient, msg: str) -> None:
-    """Append a timestamped entry to the in-memory buffer and sync to sandbox."""
+    """Append a timestamped entry to the sandbox log file.
+
+    Uses the sandbox `append_draft` tool so each call only transmits the new
+    line instead of rewriting the entire accumulated buffer. This turns the
+    scan-wide log I/O from O(n²) to O(n).
+    """
     ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    st.session_state.scan_log_buffer += f"[{ts}] {msg}\n"
+    line = f"[{ts}] {msg}\n"
     try:
-        sandbox_client.call_tool("write_draft", {
+        sandbox_client.call_tool("append_draft", {
             "filename": st.session_state.current_log_file,
-            "content": st.session_state.scan_log_buffer,
+            "content": line,
         })
     except Exception:
         pass  # Never let log I/O break the scan
@@ -241,9 +246,13 @@ def analyze_vat_with_llm(
     stored_rate: float,
     search_results: str,
     today: str,
+    model: str | None = None,
+    max_tokens: int | None = None,
 ) -> tuple[dict, str]:
     """Ask the LLM to analyze search results and return (parsed_dict, raw_json_string)."""
     client = get_openrouter_client()
+    model = model or st.session_state.get("llm_model", DEFAULT_LLM_MODEL)
+    max_tokens = max_tokens or st.session_state.get("llm_max_tokens", DEFAULT_LLM_MAX_TOKENS)
 
     # Build source-tier annotation for the user prompt
     urls = re.findall(r'URL:\s*(https?://\S+)', search_results)
@@ -298,13 +307,13 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
     raw_content = ""
     try:
         response = client.chat.completions.create(
-            model="qwen/qwen3.6-plus",
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=1500,
+            max_tokens=max_tokens,
         )
         raw_content = response.choices[0].message.content or "{}"
     except Exception as e:
@@ -319,8 +328,12 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
             "review_reason": f"API call failed: {str(e)[:100]}",
         }, raw_content
 
+    # Strip <think>...</think> reasoning blocks (emitted by Qwen and other
+    # reasoning-tuned models). If left in place, json.loads() fails because
+    # the content no longer starts with '{'.
+    content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+
     # Strip markdown code fences if present
-    content = raw_content.strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[1] if "\n" in content else content
         content = content.rsplit("```", 1)[0].strip()
@@ -357,6 +370,23 @@ with st.sidebar:
     openrouter_key = st.text_input("OpenRouter API Key", value=OPENROUTER_API_KEY, type="password")
     if openrouter_key:
         OPENROUTER_API_KEY = openrouter_key
+
+    llm_model = st.text_input(
+        "Model",
+        value=st.session_state.get("llm_model", DEFAULT_LLM_MODEL),
+        help="OpenRouter model id (env: LLM_MODEL). Example: qwen/qwen3.6-plus",
+    )
+    st.session_state.llm_model = llm_model
+
+    llm_max_tokens = st.number_input(
+        "Max tokens",
+        min_value=500,
+        max_value=8000,
+        value=int(st.session_state.get("llm_max_tokens", DEFAULT_LLM_MAX_TOKENS)),
+        step=100,
+        help="Max tokens for the LLM response (env: LLM_MAX_TOKENS).",
+    )
+    st.session_state.llm_max_tokens = int(llm_max_tokens)
 
     st.divider()
 
@@ -448,14 +478,35 @@ with col1:
 with col2:
     uploaded = st.file_uploader("Or upload VBA .txt file directly", type=["txt", "bas"])
     if uploaded:
-        raw = uploaded.read().decode("utf-8")
-        st.session_state.raw_vba = raw
-        entries, header, footer = parse_vba(raw)
-        st.session_state.entries = entries
-        st.session_state.header = header
-        st.session_state.footer = footer
-        add_log(f"Loaded {len(entries)} countries from uploaded file")
-        st.success(f"Parsed {len(entries)} countries")
+        raw_bytes = uploaded.read()
+        # VBA exports are frequently saved as cp1252 / UTF-16-LE (Windows
+        # defaults) rather than UTF-8. Try each encoding in turn and fall
+        # back to UTF-8 with replacement if nothing else parses cleanly.
+        raw = None
+        for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
+            try:
+                raw = raw_bytes.decode(enc)
+                if enc != "utf-8":
+                    add_log(f"Decoded uploaded file as {enc}")
+                break
+            except UnicodeDecodeError:
+                continue
+        if raw is None:
+            raw = raw_bytes.decode("utf-8", errors="replace")
+            st.warning("File contained bytes that could not be decoded; substituted replacement characters.")
+
+        try:
+            entries, header, footer = parse_vba(raw)
+        except Exception as e:
+            st.error(f"Failed to parse uploaded VBA file: {e}")
+            add_log(f"ERROR parsing uploaded file: {e}")
+        else:
+            st.session_state.raw_vba = raw
+            st.session_state.entries = entries
+            st.session_state.header = header
+            st.session_state.footer = footer
+            add_log(f"Loaded {len(entries)} countries from uploaded file")
+            st.success(f"Parsed {len(entries)} countries")
 
 if st.session_state.entries:
     with st.expander(f"📊 Loaded Data — {len(st.session_state.entries)} countries", expanded=False):
@@ -509,17 +560,27 @@ if st.session_state.entries:
         # ── Persistent log setup ──────────────────────────────────────────
         _log_ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         st.session_state.current_log_file = f"scan_log_{_log_ts}.txt"
-        st.session_state.scan_log_buffer = ""
         _log_sb = McpClient(sandbox_url)
+        # Ensure the log file starts empty (append_draft would otherwise
+        # append to a stale file of the same name, though the timestamp
+        # makes that unlikely).
+        try:
+            _log_sb.call_tool("write_draft", {
+                "filename": st.session_state.current_log_file,
+                "content": "",
+            })
+        except Exception:
+            pass
         _slog = lambda msg: _sandbox_log(_log_sb, msg)
 
         _today = datetime.now().strftime("%d %B %Y")
         _year = datetime.now().strftime("%Y")
         total = len(entries_to_validate)
+        _active_model = st.session_state.get("llm_model", DEFAULT_LLM_MODEL)
         _slog(
             f"SCAN STARTED | countries={total}"
             f" | test_mode={st.session_state.get('test_mode', False)}"
-            f" | model=qwen/qwen3.6-plus:free"
+            f" | model={_active_model}"
         )
         for i, entry in enumerate(entries_to_validate):
             progress_pct = (i + 1) / total
@@ -545,7 +606,7 @@ if st.session_state.entries:
                 add_log(f"Analyzing: {entry.name} with LLM")
                 _slog(
                     f"LLM CALL | {entry.iso_code}"
-                    f" | model=qwen/qwen3.6-plus:free"
+                    f" | model={_active_model}"
                     f" | search_len={len(search_results)}"
                 )
                 analysis, raw_response = analyze_vat_with_llm(
