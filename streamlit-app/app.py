@@ -31,6 +31,25 @@ SANDBOX_URL = os.environ.get("SANDBOX_URL", "http://localhost:3003")
 DEFAULT_LLM_MODEL = os.environ.get("LLM_MODEL", "qwen/qwen3.6-plus")
 DEFAULT_LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "3000"))
 
+BUSINESS_CONTEXT = """
+Business context for VAT determination:
+- Company: Imagine Clarity — a meditation and mindfulness app
+- Product type: Digital subscription service (app-based content streaming)
+- Content category: Educational and wellness — meditation guides, audio content, video teachings
+- Transaction type: B2C (business to consumer) — selling directly to individual end users
+- Not a physical good, not a luxury item, not a financial service
+- Revenue model: Fixed subscription price, VAT extracted quarterly from revenue
+
+When determining the correct VAT rate, always apply the rate that specifically
+governs digital subscription services or electronic services sold B2C to consumers
+in that country. If a country has a different rate for digital services vs physical
+goods, use the digital services rate. If a country has a reduced rate for
+educational or cultural content, note this in temporal_notes and flag for human
+review — it may apply to meditation/wellness content. If a country exempts
+educational digital content from VAT entirely, flag for human review with
+the exemption noted.
+"""
+
 # ─── Page config ──────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -284,8 +303,8 @@ def analyze_vat_with_llm(
     tier_lines = [f"  {u} → weight {_tier_weight(u):.2f}" for u in urls[:10]]
     tier_note = ("Source credibility weights:\n" + "\n".join(tier_lines)) if tier_lines else ""
 
-    system_prompt = f"""Today is {today}. You are a tax data analyst determining the current standard VAT/GST rate for a country.
-
+    system_prompt = f"""Today is {today}. You are a tax data analyst determining the correct VAT/GST rate for a specific business.
+{BUSINESS_CONTEXT}
 Rules:
 - Use only the national/federal standard rate, not regional or provincial variations
 - If a country has no national VAT system, set standard_rate to 0 and needs_human_review to false
