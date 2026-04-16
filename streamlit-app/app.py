@@ -16,7 +16,7 @@ import json
 import time
 import traceback
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 import streamlit as st
 from openai import OpenAI
 from vba_parser import parse_vba, entries_to_vba, CountryEntry, format_rate
@@ -151,15 +151,34 @@ _SOURCE_TIERS: list[tuple[float, tuple]] = [
     (0.70, ("reuters.com", "bloomberg.com")),
 ]
 _BLOG_WEIGHT = 0.2
+_AGE_PENALTY_MONTHS = 18
+_AGE_PENALTY_CAP = 0.70
 
 
-def _tier_weight(url: str) -> float:
-    """Return the credibility weight (0.2–1.0) for a given source URL."""
+def _tier_weight(url: str, publication_date: str | None = None) -> float:
+    """Return the credibility weight (0.2–1.0) for a given source URL.
+
+    If *publication_date* (``"YYYY-MM-DD"``) is provided and the source is
+    older than 18 months, the weight is capped at 0.70 regardless of domain
+    authority — a 5-year-old government PDF should not outweigh a recent
+    KPMG alert.
+    """
     lower = url.lower()
-    for weight, keywords in _SOURCE_TIERS:
+    weight = _BLOG_WEIGHT
+    for w, keywords in _SOURCE_TIERS:
         if any(k in lower for k in keywords):
-            return weight
-    return _BLOG_WEIGHT
+            weight = w
+            break
+
+    if publication_date and publication_date != "unknown":
+        try:
+            pub = datetime.strptime(publication_date, "%Y-%m-%d")
+            if datetime.now() - pub > timedelta(days=_AGE_PENALTY_MONTHS * 30):
+                weight = min(weight, _AGE_PENALTY_CAP)
+        except (ValueError, TypeError):
+            pass  # Unparseable date — no penalty applied
+
+    return weight
 
 
 def _has_circular_sourcing(search_results: str) -> bool:
@@ -190,7 +209,7 @@ def _search_country(
     year: str,
     log_fn=None,
 ) -> str:
-    """Run three targeted queries for a country and return combined results."""
+    """Run four targeted queries for a country and return combined results."""
     meta = COUNTRY_META.get(entry.iso_code)
     if meta:
         q_a = f"{entry.name} standard VAT rate {year} site:{meta['domain']}"
@@ -201,11 +220,17 @@ def _search_country(
         q_b = f"{entry.name} VAT rate {year} site:taxsummaries.pwc.com"
         q_c = f"{entry.name} ({entry.iso_code}) VAT tax rate official {year}"
 
+    # 4th query — always run, regardless of COUNTRY_META — designed to
+    # surface structural tax reforms (abolitions, replacements) that the
+    # standard rate-focused queries would miss.
+    q_reform = f"{entry.name} VAT GST tax reform abolished replaced {int(year) - 1} {year}"
+
     parts: list[str] = []
     for label, q in [
         ("Official source", q_a),
         ("PwC Tax Summaries", q_b),
         ("Local language / general", q_c),
+        ("Reform detection", q_reform),
     ]:
         if log_fn:
             log_fn(f"QUERY | {entry.iso_code} | {label} | {q}")
@@ -266,6 +291,8 @@ Rules:
 - If a country has no national VAT system, set standard_rate to 0 and needs_human_review to false
 - If evidence is weak, conflicting or unclear, set needs_human_review to true instead of guessing
 - If a country has GST instead of VAT, use that rate
+- Before concluding that a rate is confirmed, check whether any source mentions that the VAT/GST system itself has been reformed, restructured, abolished, or replaced. A structural change is more important than rate confirmation. If any source mentions the tax system changing, set needs_human_review to true and describe the structural change in temporal_notes even if you cannot determine the new rate with certainty.
+- Treat sources older than 18 months with reduced confidence. A recent accounting firm report should be weighted more heavily than an older government planning document.
 
 Return ONLY valid JSON in this exact structure, no markdown, no extra text:
 
@@ -598,7 +625,7 @@ if st.session_state.entries:
 
             try:
                 # Step 1: Three targeted searches per country
-                add_log(f"Searching (3 queries): {entry.name} ({entry.iso_code})")
+                add_log(f"Searching (4 queries): {entry.name} ({entry.iso_code})")
                 search_results = _search_country(search_client, entry, _year, log_fn=_slog)
                 circular = _has_circular_sourcing(search_results)
 
@@ -867,7 +894,7 @@ if st.session_state.validation_results and st.session_state.get("test_mode", Fal
                         claimed = src.get("claimed_rate")
                         quote = src.get("direct_quote", "")
                         pub_date = src.get("publication_date", "unknown")
-                        weight = _tier_weight(url) if url.startswith("http") else _BLOG_WEIGHT
+                        weight = _tier_weight(url, pub_date) if url.startswith("http") else _BLOG_WEIGHT
                         claimed_str = f"{claimed}%" if claimed is not None else "—"
                         st.markdown(
                             f"**{url}**  \n"
