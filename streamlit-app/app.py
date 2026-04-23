@@ -312,6 +312,7 @@ Rules:
 - If a country has GST instead of VAT, use that rate
 - Before concluding that a rate is confirmed, check whether any source mentions that the VAT/GST system itself has been reformed, restructured, abolished, or replaced. A structural change is more important than rate confirmation. If any source mentions the tax system changing, set needs_human_review to true and describe the structural change in temporal_notes even if you cannot determine the new rate with certainty.
 - Treat sources older than 18 months with reduced confidence. A recent accounting firm report should be weighted more heavily than an older government planning document.
+- Source age is critical. For each source in sources_analyzed, check the publication_date field. If the most authoritative source you found (highest source_type tier) has a publication_date older than 18 months from today's date of {today}, you must set needs_human_review to true and explain in review_reason that the best available source may be outdated — do not auto-accept a rate based solely on an old document regardless of how authoritative the domain is. A government document from 2021 cannot confirm a 2026 rate. If no publication_date is available for a source, treat it as potentially outdated and note this in temporal_notes.
 
 Return ONLY valid JSON in this exact structure, no markdown, no extra text:
 
