@@ -16,7 +16,7 @@ import json
 import time
 import traceback
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import streamlit as st
 from openai import OpenAI
 from vba_parser import parse_vba, entries_to_vba, CountryEntry, format_rate
@@ -49,6 +49,13 @@ review — it may apply to meditation/wellness content. If a country exempts
 educational digital content from VAT entirely, flag for human review with
 the exemption noted.
 """
+
+PERMANENT_REVIEW_COUNTRIES = {
+    "BR": {
+        "until": "2034-01-01",
+        "reason": "Brazil is mid tax reform (CBS/IBS dual VAT system replacing ICMS/PIS/COFINS). Full transition completes 2033. No single confirmed standard rate exists until then. Human review required every quarter."
+    }
+}
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 
@@ -685,6 +692,14 @@ if st.session_state.entries:
                 if confidence_score < 0.5:
                     needs_review = True
                     review_reason = review_reason or f"Confidence too low ({confidence_score:.2f})"
+
+                # Permanent review override
+                permanent = PERMANENT_REVIEW_COUNTRIES.get(entry.iso_code)
+                if permanent:
+                    expiry = date.fromisoformat(permanent["until"])
+                    if date.today() < expiry:
+                        needs_review = True
+                        review_reason = permanent["reason"]
 
                 # Map score to tier and backward-compat confidence string
                 if confidence_score >= 0.9:
