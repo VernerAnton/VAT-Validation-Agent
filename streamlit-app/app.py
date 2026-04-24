@@ -660,6 +660,16 @@ with st.sidebar:
     elif st.session_state.get("_log_file_list") is not None:
         st.info("No scan log files found on sandbox server.")
 
+    st.divider()
+    if st.button("🗑️ Clear saved progress", key="clear_progress_btn", use_container_width=True):
+        try:
+            _sb = McpClient(sandbox_url)
+            _sb.call_tool("write_draft", {"filename": "validation_progress.json", "content": "{}"})
+            st.session_state.validation_results = {}
+            st.success("Cleared saved progress and validation results.")
+        except Exception as e:
+            st.error(f"Failed to clear: {str(e)[:80]}")
+
 # ─── Main UI ──────────────────────────────────────────────────────────────────
 
 st.title("🌐 VAT Validation Agent")
@@ -775,14 +785,8 @@ if st.session_state.entries:
     st.header("Phase 3 — Validate VAT Rates")
     st.caption("Searches the web for each country's current VAT rate, then uses OpenRouter to compare.")
 
-    # Batch size control
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        batch_size = st.number_input("Batch size", min_value=1, max_value=185, value=10,
-                                     help="Countries to validate per batch. Lower = slower but cheaper.")
-    with col_b:
-        delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
-                                        help="Delay between API calls to avoid rate limits.")
+    delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
+                                    help="Delay between API calls to avoid rate limits.")
 
     entries_to_validate = [
         e for e in st.session_state.entries
@@ -815,6 +819,17 @@ if st.session_state.entries:
         except Exception:
             pass
         _slog = lambda msg: _sandbox_log(_log_sb, msg)
+
+        # ── Crash recovery: resume from previous scan ─────────────────────
+        try:
+            _saved = _log_sb.call_tool("read_draft", {"filename": "validation_progress.json"})
+            _saved_results = json.loads(_saved)
+            if _saved_results:
+                st.session_state.validation_results.update(_saved_results)
+                st.info(f"Resuming from previous scan — {len(_saved_results)} countries already validated, skipping those.")
+                _slog(f"RESUME | loaded {len(_saved_results)} previously validated countries from progress file")
+        except Exception:
+            pass  # No progress file or parse error — start fresh
 
         _today = datetime.now().strftime("%d %B %Y")
         _year = datetime.now().strftime("%Y")
@@ -936,6 +951,15 @@ if st.session_state.entries:
                     "reasoning": reasoning,
                 }
 
+                # Persist progress for crash recovery
+                try:
+                    _log_sb.call_tool("write_draft", {
+                        "filename": "validation_progress.json",
+                        "content": json.dumps(st.session_state.validation_results),
+                    })
+                except Exception:
+                    pass
+
                 if is_match:
                     add_log(f"✓ {entry.iso_code} {entry.name}: {entry.vat_rate}% confirmed (score={confidence_score:.2f})")
                 else:
@@ -981,6 +1005,14 @@ if st.session_state.entries:
         st.session_state.scan_complete = True
         st.session_state.scan_running = False
         add_log("Validation scan complete")
+        # Clear saved progress so the next scan starts fresh
+        try:
+            _log_sb.call_tool("write_draft", {
+                "filename": "validation_progress.json",
+                "content": "{}",
+            })
+        except Exception:
+            pass
         st.rerun()
 
 # ─── Phase 3: Review & Approve ───────────────────────────────────────────────
