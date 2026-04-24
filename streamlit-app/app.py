@@ -618,14 +618,8 @@ if st.session_state.entries:
     st.header("Phase 3 — Validate VAT Rates")
     st.caption("Searches the web for each country's current VAT rate, then uses OpenRouter to compare.")
 
-    # Batch size control
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        batch_size = st.number_input("Batch size", min_value=1, max_value=185, value=10,
-                                     help="Countries to validate per batch. Lower = slower but cheaper.")
-    with col_b:
-        delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
-                                        help="Delay between API calls to avoid rate limits.")
+    delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
+                                    help="Delay between API calls to avoid rate limits.")
 
     entries_to_validate = [
         e for e in st.session_state.entries
