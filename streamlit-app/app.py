@@ -915,17 +915,37 @@ if st.session_state.validation_results:
 
     # ─── Matches (confirmed OK) ────────────────────────────────────────
 
-    with st.expander(f"✅ Confirmed Matches — {len(matches)} countries", expanded=False):
+    high_conf_matches = {k: v for k, v in matches.items() if v.get("confidence_score", 0.0) >= 0.7}
+    low_conf_matches  = {k: v for k, v in matches.items() if v.get("confidence_score", 0.0) < 0.7}
+
+    with st.expander(f"✅ Confirmed Matches — {len(high_conf_matches)} countries", expanded=False):
         match_data = [
             {
                 "ISO": v["iso_code"],
                 "Country": v["country"],
                 "Rate": f"{format_rate(v['stored_rate'])}%",
                 "Confidence": v["confidence"],
+                "Confidence Score": f"{v.get('confidence_score', 0.0):.2f}",
             }
-            for v in sorted(matches.values(), key=lambda x: x["country"])
+            for v in sorted(high_conf_matches.values(), key=lambda x: x["country"])
         ]
         st.dataframe(match_data, use_container_width=True, hide_index=True)
+
+    if low_conf_matches:
+        with st.expander(f"⚠️ Low Confidence Matches — {len(low_conf_matches)} countries", expanded=True):
+            st.caption("These countries show no rate change but the agent had low confidence in its search results — consider manual verification.")
+            low_match_data = [
+                {
+                    "ISO": v["iso_code"],
+                    "Country": v["country"],
+                    "Rate": f"{format_rate(v['stored_rate'])}%",
+                    "Confidence": v["confidence"],
+                    "Confidence Score": f"{v.get('confidence_score', 0.0):.2f}",
+                    "Review Reason": v.get("review_reason") or "",
+                }
+                for v in sorted(low_conf_matches.values(), key=lambda x: x["country"])
+            ]
+            st.dataframe(low_match_data, use_container_width=True, hide_index=True)
 
 # ─── Reasoning Diary (test mode only) ────────────────────────────────────────
 
