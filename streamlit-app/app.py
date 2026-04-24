@@ -110,6 +110,8 @@ if "raw_llm_responses" not in st.session_state:
     st.session_state.raw_llm_responses = {}
 if "current_log_file" not in st.session_state:
     st.session_state.current_log_file = ""
+if "selected_iso_codes" not in st.session_state:
+    st.session_state.selected_iso_codes = set()
 
 # Known special/calculated rates — annotate but still validate
 SPECIAL_RATES = {
@@ -571,10 +573,49 @@ if st.session_state.entries:
         ]
         st.dataframe(data, use_container_width=True, hide_index=True)
 
-# ─── Phase 2: Validate ───────────────────────────────────────────────────────
+# ─── Phase 2: Select Countries ───────────────────────────────────────────────
 
 if st.session_state.entries:
-    st.header("Phase 2 — Validate VAT Rates")
+    st.header("Phase 2 — Select Countries")
+    st.caption("Choose which countries to include in the validation scan.")
+
+    _TEST_MODE_CODES = [
+        "DE", "FR", "EE", "ID", "MW", "MQ", "GP", "RU", "BR", "HK", "US", "AI",
+    ]
+    _all_options = [f"{e.iso_code} — {e.name}" for e in st.session_state.entries]
+
+    col_chk1, col_chk2 = st.columns([1, 1])
+    with col_chk1:
+        select_all = st.checkbox("Select all countries", key="select_all")
+    with col_chk2:
+        test_mode = st.checkbox("Test Mode (12 countries)", key="test_mode")
+
+    # Drive multiselect from shortcut checkboxes; clear when shortcut unchecked
+    if select_all:
+        st.session_state["country_multiselect"] = _all_options[:]
+    elif test_mode:
+        st.session_state["country_multiselect"] = [
+            o for o in _all_options if o.split(" — ")[0] in _TEST_MODE_CODES
+        ]
+    elif st.session_state.get("_prev_select_all", False) or st.session_state.get("_prev_test_mode", False):
+        st.session_state["country_multiselect"] = []
+    st.session_state["_prev_select_all"] = select_all
+    st.session_state["_prev_test_mode"] = test_mode
+
+    selected = st.multiselect(
+        "Countries to validate",
+        options=_all_options,
+        key="country_multiselect",
+    )
+    st.session_state.selected_iso_codes = {s.split(" — ")[0] for s in selected}
+    _x = len(st.session_state.selected_iso_codes)
+    _y = round(_x * 1.5)
+    st.caption(f"{_x} countries selected — estimated scan time: ~{_y} minutes")
+
+# ─── Phase 3: Validate ───────────────────────────────────────────────────────
+
+if st.session_state.entries:
+    st.header("Phase 3 — Validate VAT Rates")
     st.caption("Searches the web for each country's current VAT rate, then uses OpenRouter to compare.")
 
     # Batch size control
@@ -586,24 +627,15 @@ if st.session_state.entries:
         delay_between = st.number_input("Delay (sec)", min_value=0.0, max_value=5.0, value=0.5, step=0.1,
                                         help="Delay between API calls to avoid rate limits.")
 
-    _TEST_MODE_CODES = [
-        "DE", "FR", "EE", "ID", "MW", "MQ", "GP", "RU", "BR", "HK", "US", "AI",
+    entries_to_validate = [
+        e for e in st.session_state.entries
+        if e.iso_code in st.session_state.selected_iso_codes
     ]
+    if not entries_to_validate:
+        st.warning("Select at least one country to validate")
 
-    test_mode = st.checkbox("Test Mode", value=True, key="test_mode")
-
-    if test_mode:
-        _code_order = {code: i for i, code in enumerate(_TEST_MODE_CODES)}
-        entries_to_validate = sorted(
-            [e for e in st.session_state.entries if e.iso_code in _code_order],
-            key=lambda e: _code_order[e.iso_code],
-        )
-        st.warning("⚠️ Test mode — validating 12 countries (representative sample). Uncheck to run all 185.")
-    else:
-        entries_to_validate = st.session_state.entries.copy()
-        st.info(f"Will validate all **{len(entries_to_validate)}** countries — no territories skipped")
-
-    if st.button("🔍 Start Validation Scan", use_container_width=True):
+    if st.button("🔍 Start Validation Scan", use_container_width=True,
+                 disabled=not st.session_state.selected_iso_codes):
         st.session_state.scan_running = True
         st.session_state.scan_complete = False
 
@@ -633,7 +665,6 @@ if st.session_state.entries:
         _active_model = st.session_state.get("llm_model", DEFAULT_LLM_MODEL)
         _slog(
             f"SCAN STARTED | countries={total}"
-            f" | test_mode={st.session_state.get('test_mode', False)}"
             f" | model={_active_model}"
         )
         for i, entry in enumerate(entries_to_validate):
@@ -798,7 +829,7 @@ if st.session_state.entries:
 # ─── Phase 3: Review & Approve ───────────────────────────────────────────────
 
 if st.session_state.validation_results:
-    st.header("Phase 3 — Review & Approve Changes")
+    st.header("Phase 4 — Review & Approve Changes")
 
     results = st.session_state.validation_results
     mismatches = {k: v for k, v in results.items() if not v["is_match"]}
@@ -985,7 +1016,7 @@ if st.session_state.validation_results and st.session_state.get("test_mode", Fal
 # ─── Phase 4: Export ──────────────────────────────────────────────────────────
 
 if st.session_state.validation_results and st.session_state.entries:
-    st.header("Phase 4 — Export Corrected VBA Module")
+    st.header("Phase 5 — Export Corrected VBA Module")
 
     mismatches = {k: v for k, v in st.session_state.validation_results.items() if not v["is_match"]}
     approved = {k for k, v in st.session_state.approved_changes.items() if v is True}
