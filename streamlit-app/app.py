@@ -29,7 +29,7 @@ FILE_VAULT_URL = os.environ.get("FILE_VAULT_URL", "http://localhost:3001")
 WEBSEARCH_URL = os.environ.get("WEBSEARCH_URL", "http://localhost:3002")
 SANDBOX_URL = os.environ.get("SANDBOX_URL", "http://localhost:3003")
 DEFAULT_LLM_MODEL = os.environ.get("LLM_MODEL", "qwen/qwen3.6-plus")
-DEFAULT_LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "3000"))
+DEFAULT_LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "8000"))
 
 BUSINESS_CONTEXT = """
 Business context for VAT determination:
