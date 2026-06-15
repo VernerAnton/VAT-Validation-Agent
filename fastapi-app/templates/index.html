@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VAT Validation Agent</title>
+  <style>
+    /* ── Reset & Global ───────────────────────────────────────────── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      border-radius: 0 !important;
+      font-family: 'Courier New', Courier, monospace;
+    }
+
+    /* ── CSS Variables ────────────────────────────────────────────── */
+    :root {
+      --bg: linear-gradient(135deg, #f4f1ea, #ebe7db);
+      --text: #2a2a2a;
+      --card-bg: #fefdfb;
+      --shadow: #2a2a2a;
+      --accent: #2a2a2a;
+      --muted: #666;
+    }
+
+    [data-theme="light"] {
+      --bg: linear-gradient(135deg, #f4f1ea, #ebe7db);
+      --text: #2a2a2a;
+      --card-bg: #fefdfb;
+      --shadow: #2a2a2a;
+      --accent: #2a2a2a;
+      --muted: #666;
+    }
+
+    [data-theme="dark"] {
+      --bg: linear-gradient(135deg, #1a1a1a, #0d0d0d);
+      --text: #e0e0e0;
+      --card-bg: #2a2a2a;
+      --shadow: #e0e0e0;
+      --accent: #e0e0e0;
+      --muted: #999;
+    }
+
+    /* ── Base ─────────────────────────────────────────────────────── */
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    body {
+      padding: 1.5rem;
+      padding-bottom: 5rem;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+      font-family: 'Courier New', Courier, monospace;
+      margin: 0 0 1rem 0;
+    }
+
+    p { margin: 0 0 0.75rem 0; }
+
+    a { color: var(--accent); }
+
+    pre, code {
+      font-family: 'Courier New', Courier, monospace;
+    }
+
+    /* ── Cards ────────────────────────────────────────────────────── */
+    .card {
+      border: 2px solid var(--text);
+      box-shadow: 4px 4px 0px var(--shadow);
+      background: var(--card-bg);
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── Buttons ──────────────────────────────────────────────────── */
+    button, .btn {
+      border: 2px solid var(--text);
+      box-shadow: 3px 3px 0px var(--shadow);
+      background: var(--card-bg);
+      color: var(--text);
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.9rem;
+      padding: 0.5rem 1.2rem;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.1s;
+      display: inline-block;
+      text-decoration: none;
+    }
+
+    button:hover, .btn:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 6px 6px 0px var(--shadow);
+    }
+
+    button:active, .btn:active {
+      transform: translate(0, 0);
+      box-shadow: 2px 2px 0px var(--shadow);
+    }
+
+    button:disabled, .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: 3px 3px 0px var(--shadow);
+    }
+
+    button.btn-inverted {
+      background: var(--text);
+      color: var(--card-bg);
+    }
+
+    /* ── Labels ───────────────────────────────────────────────────── */
+    .label {
+      font-weight: bold;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Section Headers ──────────────────────────────────────────── */
+    .section-header {
+      font-size: 1.2rem;
+      font-weight: bold;
+      margin-bottom: 1rem;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Tables ───────────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      border: 2px solid var(--text);
+      padding: 0.4rem 0.6rem;
+      background: var(--text);
+      color: var(--card-bg);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    td {
+      border: 1px solid var(--text);
+      padding: 0.4rem 0.6rem;
+      vertical-align: middle;
+    }
+
+    tr:nth-child(even) td {
+      background: rgba(128,128,128,0.05);
+    }
+
+    /* ── Status Badges ────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border: 2px solid var(--text);
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .badge-idle     { border-color: var(--muted); color: var(--muted); }
+    .badge-pending  { border-color: #b8860b; color: #b8860b; }
+    .badge-in_progress { border-color: #4682b4; color: #4682b4; }
+    .badge-done     { border-color: #2e7d32; color: #2e7d32; }
+    .badge-failed   { border-color: #c62828; color: #c62828; }
+
+    /* ── Progress Bar ─────────────────────────────────────────────── */
+    .progress-bar-wrap {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.95rem;
+      margin: 0.5rem 0;
+    }
+
+    /* ── Log Pre ──────────────────────────────────────────────────── */
+    .log-pre {
+      background: var(--card-bg);
+      border: 2px solid var(--text);
+      padding: 1rem;
+      font-size: 0.78rem;
+      overflow-y: auto;
+      max-height: 200px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      color: var(--text);
+    }
+
+    .log-pre-lg {
+      max-height: 500px;
+    }
+
+    /* ── Country List ─────────────────────────────────────────────── */
+    .country-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 2px solid var(--text);
+      padding: 0.5rem;
+      background: var(--card-bg);
+    }
+
+    .country-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.2rem 0.3rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .country-item:hover {
+      background: rgba(128,128,128,0.1);
+    }
+
+    .country-item input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--accent);
+      width: 14px;
+      height: 14px;
+    }
+
+    /* ── Filter Input ─────────────────────────────────────────────── */
+    input[type="text"], input[type="search"] {
+      border: 2px solid var(--text);
+      background: var(--card-bg);
+      color: var(--text);
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.9rem;
+      padding: 0.4rem 0.7rem;
+      outline: none;
+      width: 100%;
+    }
+
+    input[type="text"]:focus, input[type="search"]:focus {
+      box-shadow: 3px 3px 0px var(--shadow);
+    }
+
+    /* ── Grid Metrics ─────────────────────────────────────────────── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .metric-box {
+      border: 2px solid var(--text);
+      box-shadow: 4px 4px 0px var(--shadow);
+      background: var(--card-bg);
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 2rem;
+      font-weight: bold;
+      line-height: 1.1;
+    }
+
+    .metric-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 0.3rem;
+      color: var(--muted);
+    }
+
+    /* ── Details / Summary ────────────────────────────────────────── */
+    details {
+      border: 2px solid var(--text);
+      margin-bottom: 1rem;
+    }
+
+    summary {
+      padding: 0.6rem 1rem;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 0.95rem;
+      background: var(--card-bg);
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    summary::before {
+      content: '▶';
+      font-size: 0.7rem;
+      transition: transform 0.15s;
+      display: inline-block;
+    }
+
+    details[open] summary::before {
+      transform: rotate(90deg);
+    }
+
+    .details-body {
+      padding: 1rem;
+      border-top: 2px solid var(--text);
+    }
+
+    /* ── Warning Box ──────────────────────────────────────────────── */
+    .warn-box {
+      border: 2px solid #b8860b;
+      background: rgba(184,134,11,0.08);
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+
+    /* ── Error Box ────────────────────────────────────────────────── */
+    .error-box {
+      border: 2px solid #c62828;
+      background: rgba(198,40,40,0.08);
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+
+    /* ── Flex utils ───────────────────────────────────────────────── */
+    .flex { display: flex; }
+    .flex-gap { gap: 0.5rem; }
+    .flex-wrap { flex-wrap: wrap; }
+    .align-center { align-items: center; }
+    .mb-1 { margin-bottom: 1rem; }
+    .mb-05 { margin-bottom: 0.5rem; }
+    .mt-1 { margin-top: 1rem; }
+    .muted { color: var(--muted); }
+    .small { font-size: 0.82rem; }
+    .mono { font-family: 'Courier New', Courier, monospace; }
+
+    /* ── Theme Toggle ─────────────────────────────────────────────── */
+    #theme-toggle {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 1100;
+      font-size: 0.78rem;
+      padding: 0.35rem 0.8rem;
+    }
+
+    /* ── Nav ──────────────────────────────────────────────────────── */
+    #nav {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      display: flex;
+      gap: 0.5rem;
+      z-index: 1000;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      max-width: calc(100vw - 3rem);
+    }
+
+    #nav button {
+      font-size: 0.78rem;
+      padding: 0.4rem 0.8rem;
+    }
+
+    /* ── Sections ─────────────────────────────────────────────────── */
+    section { display: none; }
+
+    /* ── Scrollbar ────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--card-bg); border: 1px solid var(--text); }
+    ::-webkit-scrollbar-thumb { background: var(--text); }
+  </style>
+</head>
+<body>
+
+  <!-- Theme Toggle -->
+  <button id="theme-toggle" title="Cycle theme">◑ SYSTEM</button>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 1: HOME                                                  -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section id="view-home">
+    <div class="card">
+      <div class="section-header">═══ VAT VALIDATION AGENT ═══</div>
+      <div class="muted small">Cloud-native MCP pipeline</div>
+    </div>
+
+    <div class="card">
+      <div class="flex flex-gap flex-wrap align-center mb-1">
+        <button id="btn-fetch-vba">[ FETCH VBA FROM FILE VAULT ]</button>
+        <span id="vba-status" class="label muted"></span>
+      </div>
+      <div id="vba-error"></div>
+    </div>
+
+    <div id="country-section" style="display:none;">
+      <div class="card">
+        <div class="section-header">═══ COUNTRY SELECTION ═══</div>
+
+        <div class="flex flex-gap flex-wrap mb-1">
+          <button id="btn-select-all">[ SELECT ALL ]</button>
+          <button id="btn-test-mode">[ TEST MODE ]</button>
+          <button id="btn-clear-all">[ CLEAR ]</button>
+        </div>
+
+        <div class="mb-1">
+          <input type="text" id="country-filter" placeholder="Filter countries..." autocomplete="off" />
+        </div>
+
+        <div class="country-list" id="country-list"></div>
+
+        <div id="selection-caption" class="label mt-1" style="display:none;"></div>
+      </div>
+
+      <div class="card">
+        <button id="btn-start-scan" disabled>[ START SCAN ]</button>
+        <div id="start-error" class="mt-1"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 2: STATUS                                                -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section id="view-status">
+    <div class="card">
+      <div class="section-header">═══ SCAN STATUS ═══</div>
+    </div>
+
+    <div class="card" id="status-card">
+      <div class="flex flex-gap align-center mb-1">
+        <span class="label">Status:</span>
+        <span id="status-badge" class="badge badge-idle">IDLE</span>
+      </div>
+      <div id="status-country" class="mb-05 small"></div>
+      <div id="status-progress-text" class="mb-05 small"></div>
+      <div id="status-progress-bar" class="progress-bar-wrap mb-1"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-header">═══ LIVE LOG TAIL ═══</div>
+      <div id="log-tail-filename" class="label muted small mb-05"></div>
+      <pre id="log-tail-pre" class="log-pre">Waiting for log data...</pre>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 3: RESULTS                                               -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section id="view-results">
+    <div class="card">
+      <div class="section-header">═══ SCAN RESULTS ═══</div>
+      <button id="btn-refresh-results" class="small">[ REFRESH ]</button>
+    </div>
+
+    <div id="results-error"></div>
+
+    <div id="results-metrics" class="metrics-grid" style="display:none;">
+      <div class="metric-box">
+        <div class="metric-value" id="metric-total">—</div>
+        <div class="metric-label">[ TOTAL VALIDATED ]</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" id="metric-matches">—</div>
+        <div class="metric-label">[ MATCHES ]</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" id="metric-mismatches">—</div>
+        <div class="metric-label">[ MISMATCHES ]</div>
+      </div>
+      <div class="metric-box">
+        <div class="metric-value" id="metric-review">—</div>
+        <div class="metric-label">[ NEEDS REVIEW ]</div>
+      </div>
+    </div>
+
+    <!-- Mismatches -->
+    <div id="mismatches-section" style="display:none;">
+      <div class="card">
+        <div class="section-header">═══ MISMATCHES ═══</div>
+        <div class="flex flex-gap flex-wrap mb-1">
+          <button id="btn-approve-all">[ APPROVE ALL ]</button>
+          <button id="btn-reject-all">[ REJECT ALL ]</button>
+        </div>
+        <div id="mismatches-error"></div>
+        <div style="overflow-x:auto;">
+          <table id="mismatches-table">
+            <thead>
+              <tr>
+                <th>ISO</th>
+                <th>Country</th>
+                <th>Stored Rate</th>
+                <th>Found Rate</th>
+                <th>Diff</th>
+                <th>Confidence</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="mismatches-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- High confidence matches -->
+    <details id="details-confirmed">
+      <summary id="details-confirmed-summary">═══ CONFIRMED MATCHES (0) ═══</summary>
+      <div class="details-body" style="overflow-x:auto;">
+        <table id="confirmed-table">
+          <thead>
+            <tr>
+              <th>ISO</th>
+              <th>Country</th>
+              <th>Rate</th>
+              <th>Confidence</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody id="confirmed-tbody"></tbody>
+        </table>
+      </div>
+    </details>
+
+    <!-- Low confidence matches -->
+    <details id="details-lowconf" open>
+      <summary id="details-lowconf-summary">⚠ LOW CONFIDENCE MATCHES (0) ═══</summary>
+      <div class="details-body">
+        <p class="warn-box">These countries show no rate change but the agent had low confidence in its findings. Manual verification is recommended before accepting these results.</p>
+        <div style="overflow-x:auto;">
+          <table id="lowconf-table">
+            <thead>
+              <tr>
+                <th>ISO</th>
+                <th>Country</th>
+                <th>Rate</th>
+                <th>Confidence</th>
+                <th>Score</th>
+                <th>Review Reason</th>
+              </tr>
+            </thead>
+            <tbody id="lowconf-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 4: EXPORT                                                -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section id="view-export">
+    <div class="card">
+      <div class="section-header">═══ EXPORT ═══</div>
+    </div>
+
+    <div class="card">
+      <div class="flex flex-gap flex-wrap">
+        <button id="btn-dl-vba">[ DOWNLOAD CORRECTED VBA ]</button>
+        <button id="btn-dl-json">[ DOWNLOAD JSON REPORT ]</button>
+      </div>
+      <div id="export-error" class="mt-1"></div>
+    </div>
+
+    <!-- Reasoning Diary (test mode only) -->
+    <div id="reasoning-diary" style="display:none;">
+      <div class="card">
+        <div class="section-header">═══ REASONING DIARY ═══</div>
+      </div>
+      <div id="diary-entries"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 5: LOGS                                                  -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <section id="view-logs">
+    <div class="card">
+      <div class="section-header">═══ SCAN LOGS ═══</div>
+      <div class="flex flex-gap align-center flex-wrap mb-1">
+        <button id="btn-refresh-logs">[ REFRESH LOG LIST ]</button>
+        <span id="logs-viewing-label" class="label muted small"></span>
+      </div>
+      <div id="logs-list" class="mb-1"></div>
+      <div id="logs-error"></div>
+      <pre id="logs-content-pre" class="log-pre log-pre-lg" style="display:none;"></pre>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- NAVIGATION                                                    -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <nav id="nav">
+    <button data-nav="view-home">[ HOME ]</button>
+    <button data-nav="view-status">[ STATUS ]</button>
+    <button data-nav="view-results">[ RESULTS ]</button>
+    <button data-nav="view-export">[ EXPORT ]</button>
+    <button data-nav="view-logs">[ LOGS ]</button>
+  </nav>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
