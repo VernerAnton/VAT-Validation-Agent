@@ -4,3 +4,4 @@ httpx
 jinja2
 python-multipart
 python-dotenv
+starlette<1.0.0
