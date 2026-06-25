@@ -184,8 +184,10 @@ async def scan_export():
 async def list_logs():
     try:
         raw = await _sandbox().call_tool("list_drafts", {})
-        files = [ln.strip() for ln in raw.splitlines() if ln.strip().startswith("scan_log_")]
-        return sorted(files, reverse=True)
+        data = json.loads(raw)
+        files = data.get("files", []) if isinstance(data, dict) else []
+        scan_logs = [f for f in files if f.startswith("scan_log_")]
+        return sorted(scan_logs, reverse=True)
     except Exception as e:
         raise HTTPException(502, f"Sandbox error: {e}")
 

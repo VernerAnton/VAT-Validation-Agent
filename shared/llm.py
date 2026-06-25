@@ -145,6 +145,11 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
             content = content[4:].strip()
 
     try:
+        # Extract just the JSON object to handle trailing text after closing brace
+        start = content.find('{')
+        end = content.rfind('}')
+        if start != -1 and end != -1:
+            content = content[start:end + 1]
         parsed = json.loads(content)
         return parsed, raw_content
     except json.JSONDecodeError as e:

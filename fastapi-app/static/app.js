@@ -397,7 +397,9 @@ function renderResults(data) {
     }
   });
 
-  const needsReview = entries.filter(([, r]) => r.needs_human_review).length;
+  const needsReview = entries.filter(([, r]) =>
+    r.needs_human_review && (!r.is_match || r.confidence_score < 0.7)
+  ).length;
 
   // Metrics
   document.getElementById('results-metrics').style.display = '';
