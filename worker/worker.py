@@ -124,15 +124,15 @@ def _write_results_atomic(results: dict) -> None:
 
 # ─── Resume logic ─────────────────────────────────────────────────────────────
 
-def _try_load_resume(sandbox: SyncMcpClient) -> dict | None:
-    """Try to load a prior in-progress run from the sandbox.
-
-    Returns the progress dict if it has status 'in_progress', else None.
+def _try_load_resume(sandbox: SyncMcpClient, job_id: str) -> dict | None:
+    """Try to load a prior in-progress run from the sandbox, but only if
+    it belongs to the same job_id — otherwise a stale progress file from
+    a completed or abandoned job could incorrectly short-circuit a new scan.
     """
     try:
         raw = sandbox.call_tool("read_draft", {"filename": "validation_progress.json"})
         data = json.loads(raw)
-        if data.get("status") == "in_progress":
+        if data.get("status") == "in_progress" and data.get("job_id") == job_id:
             return data
     except Exception:
         pass
@@ -508,12 +508,6 @@ def main() -> None:
 
     _sandbox_client = sandbox
 
-    # Attempt to resume a prior in-progress run before entering poll loop
-    resumed_progress = _try_load_resume(sandbox)
-    if resumed_progress:
-        n_prior = len(resumed_progress.get("results", {}))
-        print(f"[RESUME] Found in-progress state with {n_prior} completed countries.")
-
     while not _shutdown:
         job = _poll_for_job(sandbox)
         if job is None:
@@ -522,6 +516,10 @@ def main() -> None:
 
         print(f"[WORKER] Found pending job {job['job_id']} — claiming...")
         _claim_job(sandbox, job)
+        resumed_progress = _try_load_resume(sandbox, job["job_id"])
+        if resumed_progress:
+            n_prior = len(resumed_progress.get("results", {}))
+            print(f"[RESUME] Found matching in-progress state with {n_prior} completed countries.")
 
         try:
             final_results = _run_scan(
@@ -549,8 +547,6 @@ def main() -> None:
                 "filename": "scan_job.json",
                 "content": json.dumps({**job, "status": "failed"}),
             })
-            # Reset resume state and loop back to poll
-            resumed_progress = None
             time.sleep(POLL_INTERVAL)
             continue
 
@@ -573,9 +569,6 @@ def main() -> None:
 
         print(f"[WORKER] Job {job['job_id']} complete.")
         _slog(f"Job {job['job_id']} complete.")
-
-        # Clear resume state; ready for next job
-        resumed_progress = None
 
     print("[WORKER] Shutdown complete.")
 
