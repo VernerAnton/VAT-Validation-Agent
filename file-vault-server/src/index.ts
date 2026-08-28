@@ -163,9 +163,13 @@ app.get('/', (_req: Request, res: Response) => {
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
-app.listen(PORT, '0.0.0.0', () => {
+// Bind dual-stack ('::' accepts both IPv6 and IPv4-mapped connections).
+// Railway private networking resolves *.railway.internal over IPv6, so an
+// IPv4-only bind ('0.0.0.0') would black-hole internal service-to-service
+// traffic while still working over the public edge.
+app.listen(PORT, '::', () => {
   console.log(`[file-vault-server] Server running on port ${PORT}`);
-  console.log(`[file-vault-server] MCP endpoint: POST http://0.0.0.0:${PORT}/mcp`);
-  console.log(`[file-vault-server] Health check: GET http://0.0.0.0:${PORT}/health`);
+  console.log(`[file-vault-server] MCP endpoint: POST http://localhost:${PORT}/mcp`);
+  console.log(`[file-vault-server] Health check: GET http://localhost:${PORT}/health`);
   console.log(`[file-vault-server] Resource URI: vat-database://module2`);
 });
