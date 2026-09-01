@@ -479,7 +479,7 @@ function renderResults(data) {
       <td>${r.iso}</td>
       <td>${flagged ? '⚠ ' : ''}${name}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
-      <td>${r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}</td>
+      <td>${escHtml(r.confidence || '—')}</td>
       <td>${r.confidence_score != null ? confBar(r.confidence_score) : '—'}</td>
       <td>${flagged ? (reason || 'Flagged for human review') : ''}</td>
     `;
@@ -497,9 +497,9 @@ function renderResults(data) {
       <td>${r.iso}</td>
       <td>${r.country_name || r.country || '—'}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
-      <td>${r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}</td>
+      <td>${escHtml(r.confidence || '—')}</td>
       <td>${r.confidence_score != null ? confBar(r.confidence_score) : '—'}</td>
-      <td>${r.review_reason || '—'}</td>
+      <td>${escHtml(r.review_reason || '—')}</td>
     `;
     lTbody.appendChild(tr);
   });
