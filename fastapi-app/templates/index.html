@@ -157,6 +157,14 @@
       background: rgba(128,128,128,0.05);
     }
 
+    /* Confirmed matches that still carry needs_human_review. Declared after
+       the striping rule so it wins on even rows too. */
+    tr.flagged-row td,
+    tr.flagged-row:nth-child(even) td {
+      background: rgba(245,158,11,0.12);
+      border-color: #f59e0b;
+    }
+
     /* ── Status Badges ────────────────────────────────────────────── */
     .badge {
       display: inline-block;
@@ -522,6 +530,7 @@
               <th>Rate</th>
               <th>Confidence</th>
               <th>Score</th>
+              <th>Review Reason</th>
             </tr>
           </thead>
           <tbody id="confirmed-tbody"></tbody>
