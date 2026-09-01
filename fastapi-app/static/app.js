@@ -439,18 +439,49 @@ function renderResults(data) {
   document.getElementById('btn-reject-all').onclick  = () => bulkReview('reject',  mismatches.map(r => r.iso));
 
   // ── Confirmed High Confidence
+  // A matching rate and decent confidence does not mean "nothing to see":
+  // a structural tax reform can leave the rate unchanged while still setting
+  // needs_human_review. Surface those rather than burying them.
+  const flaggedConfirmed = confirmedHigh.filter(r => r.needs_human_review);
+
+  confirmedHigh.sort((a, b) => {
+    const aFlag = a.needs_human_review ? 0 : 1;
+    const bFlag = b.needs_human_review ? 0 : 1;
+    if (aFlag !== bFlag) return aFlag - bFlag;
+    return (a.country_name || a.country || '').localeCompare(b.country_name || b.country || '');
+  });
+
   document.getElementById('details-confirmed-summary').textContent =
-    '═══ CONFIRMED MATCHES (' + confirmedHigh.length + ') ═══';
+    '═══ CONFIRMED MATCHES (' + confirmedHigh.length + ') ═══' +
+    (flaggedConfirmed.length ? '  ⚠ ' + flaggedConfirmed.length + ' FLAGGED' : '');
+
+  // Expand automatically when something in here needs attention, so the user
+  // is not required to open it to find out that they should have.
+  const cDetails = document.getElementById('details-confirmed');
+  if (flaggedConfirmed.length > 0) {
+    cDetails.setAttribute('open', '');
+  } else {
+    cDetails.removeAttribute('open');
+  }
+
   const cTbody = document.getElementById('confirmed-tbody');
   clearEl(cTbody);
   confirmedHigh.forEach(r => {
     const tr = document.createElement('tr');
+    const flagged = !!r.needs_human_review;
+    const reason = r.review_reason ? escHtml(r.review_reason) : '';
+    const name = escHtml(r.country_name || r.country || '—');
+
+    if (flagged) tr.className = 'flagged-row';
+    if (flagged && reason) tr.setAttribute('title', reason);
+
     tr.innerHTML = `
       <td>${r.iso}</td>
-      <td>${r.country_name || r.country || '—'}</td>
+      <td>${flagged ? '⚠ ' : ''}${name}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
-      <td>${r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}</td>
+      <td>${escHtml(r.confidence || '—')}</td>
       <td>${r.confidence_score != null ? confBar(r.confidence_score) : '—'}</td>
+      <td>${flagged ? (reason || 'Flagged for human review') : ''}</td>
     `;
     cTbody.appendChild(tr);
   });
@@ -466,9 +497,9 @@ function renderResults(data) {
       <td>${r.iso}</td>
       <td>${r.country_name || r.country || '—'}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
-      <td>${r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}</td>
+      <td>${escHtml(r.confidence || '—')}</td>
       <td>${r.confidence_score != null ? confBar(r.confidence_score) : '—'}</td>
-      <td>${r.review_reason || '—'}</td>
+      <td>${escHtml(r.review_reason || '—')}</td>
     `;
     lTbody.appendChild(tr);
   });

@@ -232,6 +232,17 @@ def _confidence_tier(score: float, needs_review: bool) -> str:
 # ─── Country result builder ───────────────────────────────────────────────────
 
 def _build_error_result(entry: CountryEntry, exc: Exception) -> dict:
+    reason = f"Exception during processing: {str(exc)[:200]}"
+    # A country under a standing review mandate keeps that as its stated
+    # reason even when processing failed — the mandate explains the review
+    # far better than an incidental stack error does.
+    perm = PERMANENT_REVIEW_COUNTRIES.get(entry.iso_code)
+    if perm:
+        try:
+            if date.fromisoformat(perm["until"]) > date.today():
+                reason = f"{perm['reason']} (processing also failed: {str(exc)[:120]})"
+        except (ValueError, KeyError):
+            pass
     return {
         "iso_code": entry.iso_code,
         "country": entry.name,
@@ -242,7 +253,7 @@ def _build_error_result(entry: CountryEntry, exc: Exception) -> dict:
         "confidence_score": 0.0,
         "confidence_tier": "human_review",
         "needs_human_review": True,
-        "review_reason": f"Exception during processing: {str(exc)[:200]}",
+        "review_reason": reason,
         "source_agreement": "insufficient",
         "temporal_notes": "",
         "reasoning": f"Processing failed with exception: {str(exc)}",
@@ -351,14 +362,41 @@ def _run_scan(
                     api_key=OPENROUTER_API_KEY,
                 )
             )
-            _slog(f"{entry.iso_code}: LLM analysis done — score={analysis.get('confidence_score', 0):.2f}")
+            # The LLM may legitimately return null for standard_rate when no
+            # single rate exists — a country mid tax reform, for example. Note
+            # that dict.get() only applies its default when the key is absent,
+            # NOT when it is present with a null value, so coerce explicitly
+            # rather than relying on the default.
+            _raw_rate = analysis.get("standard_rate")
+            _raw_score = analysis.get("confidence_score")
 
-            current_rate: float = float(analysis.get("standard_rate", entry.vat_rate))
-            confidence_score: float = float(analysis.get("confidence_score", 0.0))
+            rate_undetermined = _raw_rate is None
+            try:
+                current_rate: float = entry.vat_rate if rate_undetermined else float(_raw_rate)
+            except (TypeError, ValueError):
+                rate_undetermined = True
+                current_rate = entry.vat_rate
+
+            try:
+                confidence_score: float = 0.0 if _raw_score is None else float(_raw_score)
+            except (TypeError, ValueError):
+                confidence_score = 0.0
+
             needs_review: bool = bool(analysis.get("needs_human_review", False))
             review_reason: str | None = analysis.get("review_reason")
-            source_agreement: str = analysis.get("source_agreement", "insufficient")
-            reasoning: str = analysis.get("reasoning", "")
+            source_agreement: str = analysis.get("source_agreement") or "insufficient"
+            reasoning: str = analysis.get("reasoning") or ""
+
+            _slog(f"{entry.iso_code}: LLM analysis done — score={confidence_score:.2f}")
+
+            # No determinable rate is itself grounds for review — keep the
+            # stored rate rather than inventing one.
+            if rate_undetermined:
+                needs_review = True
+                review_reason = review_reason or (
+                    "No single standard rate could be determined from the sources; "
+                    "stored rate retained pending human review."
+                )
 
             # Auto-escalate overrides
             if source_agreement == "conflicting":
