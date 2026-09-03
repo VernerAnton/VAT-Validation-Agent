@@ -64,30 +64,10 @@ def _has_circular_sourcing(search_results: str) -> bool:
     return not (has_authoritative or has_secondary)
 
 
-def _search_country(search_client, entry, year: str, log_fn=None) -> str:
-    """Run four targeted queries for a country and return combined results."""
-    meta = COUNTRY_META.get(entry.iso_code)
-    if meta:
-        q_a = f"{entry.name} standard VAT rate {year} site:{meta['domain']}"
-        q_b = f"{entry.name} VAT rate {year} site:taxsummaries.pwc.com"
-        q_c = f"{entry.name} {meta['vat_term']} {year}"
-    else:
-        q_a = f"{entry.name} standard VAT GST rate {year}"
-        q_b = f"{entry.name} VAT rate {year} site:taxsummaries.pwc.com"
-        q_c = f"{entry.name} ({entry.iso_code}) VAT tax rate official {year}"
-
-    # 4th query — always run, regardless of COUNTRY_META — designed to
-    # surface structural tax reforms (abolitions, replacements) that the
-    # standard rate-focused queries would miss.
-    q_reform = f"{entry.name} VAT GST tax reform abolished replaced {int(year) - 1} {year}"
-
+def _run_queries(search_client, entry, queries, log_fn=None) -> str:
+    """Execute labelled queries and combine their results into one blob."""
     parts: list[str] = []
-    for label, q in [
-        ("Official source", q_a),
-        ("PwC Tax Summaries", q_b),
-        ("Local language / general", q_c),
-        ("Reform detection", q_reform),
-    ]:
+    for label, q in queries:
         if log_fn:
             log_fn(f"QUERY | {entry.iso_code} | {label} | {q}")
         try:
@@ -101,3 +81,69 @@ def _search_country(search_client, entry, year: str, log_fn=None) -> str:
                 log_fn(f"QUERY FAILED | {entry.iso_code} | {label} | {e}")
             parts.append(f"[{label} — FAILED: {e}]")
     return "\n\n".join(parts)
+
+
+def _build_queries(entry, year: str, domain: str | None, vat_term: str | None) -> list[tuple[str, str]]:
+    """Build the labelled query set for a country.
+
+    Single definition of the four-query pattern, shared by the COUNTRY_META
+    path and the retry path so the two cannot drift. A domain narrows the
+    official-source query to that site; without one it stays generic.
+    """
+    if domain:
+        q_a = f"{entry.name} standard VAT rate {year} site:{domain}"
+    else:
+        q_a = f"{entry.name} standard VAT GST rate {year}"
+
+    q_b = f"{entry.name} VAT rate {year} site:taxsummaries.pwc.com"
+
+    if vat_term:
+        q_c = f"{entry.name} {vat_term} {year}"
+    else:
+        q_c = f"{entry.name} ({entry.iso_code}) VAT tax rate official {year}"
+
+    # 4th query — always run, regardless of whether a domain is known —
+    # designed to surface structural tax reforms (abolitions, replacements)
+    # that the standard rate-focused queries would miss.
+    q_reform = f"{entry.name} VAT GST tax reform abolished replaced {int(year) - 1} {year}"
+
+    return [
+        ("Official source", q_a),
+        ("PwC Tax Summaries", q_b),
+        ("Local language / general", q_c),
+        ("Reform detection", q_reform),
+    ]
+
+
+def _search_country(search_client, entry, year: str, log_fn=None) -> str:
+    """Run four targeted queries for a country and return combined results.
+
+    Uses the static COUNTRY_META table to decide which domain to target.
+    """
+    meta = COUNTRY_META.get(entry.iso_code)
+    queries = _build_queries(
+        entry,
+        year,
+        domain=meta["domain"] if meta else None,
+        vat_term=meta["vat_term"] if meta else None,
+    )
+    return _run_queries(search_client, entry, queries, log_fn=log_fn)
+
+
+def _search_country_targeted(
+    search_client,
+    entry,
+    year: str,
+    domain: str | None,
+    vat_term: str | None,
+    log_fn=None,
+) -> str:
+    """Same query pattern as _search_country, but against a caller-supplied
+    domain/vat_term rather than a COUNTRY_META lookup.
+
+    Used by the retry flow with either a freshly-discovered or cached domain.
+    Passing domain=None degrades to the same generic queries _search_country
+    uses for a country with no COUNTRY_META entry.
+    """
+    queries = _build_queries(entry, year, domain=domain, vat_term=vat_term)
+    return _run_queries(search_client, entry, queries, log_fn=log_fn)

@@ -422,7 +422,7 @@ function renderResults(data) {
     tr.dataset.iso = r.iso;
     tr.innerHTML = `
       <td>${r.iso}</td>
-      <td>${r.country_name || r.country || '—'}</td>
+      <td>${reVerifiedPrefix(r)}${escHtml(r.country_name || r.country || '—')}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
       <td>${r.found_rate  != null ? r.found_rate  : '—'}</td>
       <td>${r.rate_diff   != null ? (r.rate_diff > 0 ? '+' : '') + r.rate_diff : '—'}</td>
@@ -477,7 +477,7 @@ function renderResults(data) {
 
     tr.innerHTML = `
       <td>${r.iso}</td>
-      <td>${flagged ? '⚠ ' : ''}${name}</td>
+      <td>${flagged ? '⚠ ' : ''}${reVerifiedPrefix(r)}${name}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
       <td>${escHtml(r.confidence || '—')}</td>
       <td>${r.confidence_score != null ? confBar(r.confidence_score) : '—'}</td>
@@ -491,18 +491,103 @@ function renderResults(data) {
     '⚠ LOW CONFIDENCE MATCHES (' + lowConf.length + ') ═══';
   const lTbody = document.getElementById('lowconf-tbody');
   clearEl(lTbody);
+  window.lowConfIsoCodes = lowConf.map(r => r.iso);
+
   lowConf.forEach(r => {
     const tr = document.createElement('tr');
+    // A country that has already been re-verified and is STILL low confidence
+    // stays here, badged — that is the honest outcome, not a failure to move.
+    if (r.re_verified) tr.className = 'flagged-row';
     tr.innerHTML = `
       <td>${r.iso}</td>
-      <td>${r.country_name || r.country || '—'}</td>
+      <td>${reVerifiedPrefix(r)}${escHtml(r.country_name || r.country || '—')}</td>
       <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
       <td>${escHtml(r.confidence || '—')}</td>
       <td>${r.confidence_score != null ? confBar(r.confidence_score) : '—'}</td>
       <td>${escHtml(r.review_reason || '—')}</td>
+      <td class="retry-action"></td>
     `;
+    renderRetryAction(tr.querySelector('.retry-action'), r.iso);
     lTbody.appendChild(tr);
   });
+
+  const bulkWrap = document.getElementById('lowconf-bulk');
+  if (bulkWrap) bulkWrap.style.display = lowConf.length > 0 ? '' : 'none';
+}
+
+/* ── Targeted retry ───────────────────────────────────────────────────────── */
+
+// Countries currently listed as low confidence, kept so the bulk button knows
+// what to submit without re-deriving it from the DOM.
+window.lowConfIsoCodes = window.lowConfIsoCodes || [];
+
+function reVerifiedPrefix(r) {
+  return r && r.re_verified ? '↻ RE-VERIFIED  ' : '';
+}
+
+async function submitRetry(isoCodes, statusEl) {
+  if (!isoCodes || isoCodes.length === 0) return;
+  const label = statusEl || document.getElementById('retry-status');
+  if (label) label.textContent = 'Queueing…';
+
+  try {
+    const resp = await fetch('/api/scan/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ countries: isoCodes }),
+    });
+
+    if (resp.status === 409) {
+      if (label) label.textContent = 'A scan or retry is already running.';
+      return;
+    }
+    if (!resp.ok) {
+      const detail = await resp.text();
+      if (label) label.textContent = 'Failed: ' + detail.slice(0, 120);
+      return;
+    }
+
+    if (label) label.textContent = 'Queued — switching to status…';
+    // The Status view already polls validation_progress.json every 3s and
+    // navigates back to Results when it reports done, so nothing further is
+    // needed here.
+    showView('view-status');
+    if (typeof startStatusPolling === 'function') startStatusPolling();
+  } catch (err) {
+    if (label) label.textContent = 'Failed: ' + err.message;
+  }
+}
+
+// Bulk retry — submits every country currently listed as low confidence.
+// Attached at top level like the other listeners in this file; the script is
+// loaded with defer, so the DOM is already parsed.
+(function wireBulkRetry() {
+  const bulkBtn = document.getElementById('btn-retry-all');
+  if (!bulkBtn) return;
+  bulkBtn.addEventListener('click', () => {
+    const isos = window.lowConfIsoCodes || [];
+    const label = document.getElementById('retry-status');
+    if (isos.length === 0) {
+      if (label) label.textContent = 'Nothing to re-run.';
+      return;
+    }
+    bulkBtn.disabled = true;
+    submitRetry(isos, label);
+  });
+})();
+
+function renderRetryAction(container, iso) {
+  clearEl(container);
+  const btn = document.createElement('button');
+  btn.textContent = '[ ↻ RE-RUN TARGETED ]';
+  btn.style.fontSize = '0.75rem';
+  btn.style.padding = '0.25rem 0.6rem';
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    btn.textContent = '[ QUEUEING… ]';
+    submitRetry([iso]);
+  });
+  container.appendChild(btn);
 }
 
 function renderReviewActions(container, iso, currentStatus) {
