@@ -96,6 +96,48 @@ async def scan_start(body: ScanStartRequest):
     return job
 
 
+class RetryRequest(BaseModel):
+    countries: list[str]
+
+
+@app.post("/api/scan/retry")
+async def scan_retry(body: RetryRequest):
+    """Queue a targeted re-verification for specific countries.
+
+    Unlike /api/scan/start this does not clear existing results — the worker
+    patches individual countries in scan_results.json and leaves the rest
+    alone.
+    """
+    if not body.countries:
+        raise HTTPException(400, "No countries supplied")
+
+    sb = _sandbox()
+
+    # The worker is single-threaded, so refuse to queue work behind a run that
+    # is already going rather than letting the two silently interleave.
+    try:
+        raw = await sb.call_tool("read_draft", {"filename": "validation_progress.json"})
+        if json.loads(raw).get("status") == "in_progress":
+            raise HTTPException(409, "A scan or retry is already running")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # No progress file yet, or unreadable — nothing is running
+
+    job = {
+        "job_id": str(uuid.uuid4()),
+        "status": "pending",
+        "mode": "retry",
+        "countries": body.countries,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    await sb.call_tool("write_draft", {
+        "filename": "retry_job.json",
+        "content": json.dumps(job),
+    })
+    return job
+
+
 @app.get("/api/scan/status")
 async def scan_status():
     try:

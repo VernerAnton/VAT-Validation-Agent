@@ -543,6 +543,10 @@
       <summary id="details-lowconf-summary">⚠ LOW CONFIDENCE MATCHES (0) ═══</summary>
       <div class="details-body">
         <p class="warn-box">These countries show no rate change but the agent had low confidence in its findings. Manual verification is recommended before accepting these results.</p>
+        <div id="lowconf-bulk" style="margin-bottom:0.8rem;">
+          <button id="btn-retry-all">[ ↻ RE-RUN ALL LOW CONFIDENCE ]</button>
+          <span id="retry-status" class="label" style="margin-left:0.8rem;"></span>
+        </div>
         <div style="overflow-x:auto;">
           <table id="lowconf-table">
             <thead>
@@ -553,6 +557,7 @@
                 <th>Confidence</th>
                 <th>Score</th>
                 <th>Review Reason</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="lowconf-tbody"></tbody>

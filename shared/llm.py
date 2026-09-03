@@ -37,6 +37,32 @@ def _tier_weight_for_prompt(url: str) -> float:
     return _BLOG_WEIGHT
 
 
+def extract_json_object(raw: str) -> str:
+    """Reduce a raw model response down to the JSON object it contains.
+
+    Handles the three things models do that break json.loads():
+      - <think>...</think> blocks (Qwen and other reasoning-tuned models)
+      - markdown code fences
+      - prose before or after the object (the "Extra data" failure that was
+        marking Anguilla and Malawi as errors)
+
+    Shared by the M3 analysis call and Sonar discovery so the two cannot drift.
+    """
+    content = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else content
+        content = content.rsplit("```", 1)[0].strip()
+        if content.startswith("json"):
+            content = content[4:].strip()
+
+    start = content.find('{')
+    end = content.rfind('}')
+    if start != -1 and end != -1:
+        content = content[start:end + 1]
+    return content
+
+
 async def analyze_vat_with_llm(
     country_name: str,
     iso_code: str,
@@ -134,22 +160,9 @@ Determine the current standard VAT/GST rate for {country_name}. Return JSON only
             "review_reason": f"API call failed: {str(e)[:100]}",
         }, raw_content
 
-    # Strip <think>...</think> reasoning blocks (emitted by Qwen and other
-    # reasoning-tuned models).
-    content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
-
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1] if "\n" in content else content
-        content = content.rsplit("```", 1)[0].strip()
-        if content.startswith("json"):
-            content = content[4:].strip()
+    content = extract_json_object(raw_content)
 
     try:
-        # Extract just the JSON object to handle trailing text after closing brace
-        start = content.find('{')
-        end = content.rfind('}')
-        if start != -1 and end != -1:
-            content = content[start:end + 1]
         parsed = json.loads(content)
         return parsed, raw_content
     except json.JSONDecodeError as e:

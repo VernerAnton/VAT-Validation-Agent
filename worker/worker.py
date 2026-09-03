@@ -14,6 +14,7 @@ load_dotenv()
 import asyncio
 import json
 import os
+import re
 import signal
 import time
 from datetime import date, datetime
@@ -29,8 +30,14 @@ from shared.constants import (
     DEFAULT_LLM_MAX_TOKENS,
 )
 from shared.vba_parser import parse_vba, CountryEntry
-from shared.search import _search_country, _has_circular_sourcing
+from shared.search import (
+    _search_country,
+    _search_country_targeted,
+    _has_circular_sourcing,
+)
 from shared.llm import analyze_vat_with_llm
+from shared.discovery import discover_country_source
+from shared import db
 
 # ─── Environment ─────────────────────────────────────────────────────────────
 
@@ -44,6 +51,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "")
 PROGRESS_DIR      = os.environ.get("PROGRESS_DIR",        "/data")
 SCAN_DELAY        = float(os.environ.get("SCAN_DELAY",    "0.5"))
+RETRY_DELAY       = float(os.environ.get("RETRY_DELAY",   "0.2"))
 
 POLL_INTERVAL     = 10  # seconds between job polls
 
@@ -141,10 +149,20 @@ def _try_load_resume(sandbox: SyncMcpClient, job_id: str) -> dict | None:
 
 # ─── Job polling ──────────────────────────────────────────────────────────────
 
-def _poll_for_job(sandbox: SyncMcpClient) -> dict | None:
-    """Read scan_job.json from sandbox. Returns the dict if status=='pending'."""
+SCAN_JOB_FILE  = "scan_job.json"
+RETRY_JOB_FILE = "retry_job.json"
+
+
+def _poll_for_job(sandbox: SyncMcpClient, filename: str = SCAN_JOB_FILE) -> dict | None:
+    """Read a job file from sandbox. Returns the dict if status=='pending'.
+
+    Retries live in their own file rather than sharing scan_job.json: the job
+    dict is captured in memory at claim time and written back wholesale on
+    completion, so a retry queued into the same file mid-scan would be
+    silently overwritten when the scan finished.
+    """
     try:
-        raw = sandbox.call_tool("read_draft", {"filename": "scan_job.json"})
+        raw = sandbox.call_tool("read_draft", {"filename": filename})
         job = json.loads(raw)
         if job.get("status") == "pending":
             return job
@@ -153,22 +171,38 @@ def _poll_for_job(sandbox: SyncMcpClient) -> dict | None:
     return None
 
 
-def _claim_job(sandbox: SyncMcpClient, job: dict) -> None:
+def _set_job_status(sandbox: SyncMcpClient, job: dict, filename: str, status: str) -> None:
+    """Write a job back to its file with the given status."""
+    job["status"] = status
+    sandbox.call_tool("write_draft", {
+        "filename": filename,
+        "content": json.dumps(job),
+    })
+
+
+def _claim_job(sandbox: SyncMcpClient, job: dict, filename: str = SCAN_JOB_FILE) -> None:
     """Mark the job as in_progress on the sandbox server."""
-    job["status"] = "in_progress"
-    sandbox.call_tool("write_draft", {
-        "filename": "scan_job.json",
-        "content": json.dumps(job),
-    })
+    _set_job_status(sandbox, job, filename, "in_progress")
 
 
-def _complete_job(sandbox: SyncMcpClient, job: dict) -> None:
+def _complete_job(sandbox: SyncMcpClient, job: dict, filename: str = SCAN_JOB_FILE) -> None:
     """Mark the job as done on the sandbox server."""
-    job["status"] = "done"
-    sandbox.call_tool("write_draft", {
-        "filename": "scan_job.json",
-        "content": json.dumps(job),
-    })
+    _set_job_status(sandbox, job, filename, "done")
+
+
+def _read_scan_results(sandbox: SyncMcpClient) -> dict | None:
+    """Read the current scan_results.json back from the sandbox.
+
+    The sandbox copy is authoritative: /api/scan/results serves it, so it is
+    what the UI displays and therefore what a retry must patch. The local
+    /data copy is a mirror and can be absent on a fresh volume.
+    """
+    try:
+        raw = sandbox.call_tool("read_draft", {"filename": "scan_results.json"})
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
 
 
 # ─── Telegram notification ────────────────────────────────────────────────────
@@ -230,6 +264,99 @@ def _confidence_tier(score: float, needs_review: bool) -> str:
 
 
 # ─── Country result builder ───────────────────────────────────────────────────
+
+def _build_result(entry: CountryEntry, analysis: dict, search_results: str) -> dict:
+    """Turn a raw LLM analysis into a country result dict.
+
+    Shared by the full-scan and targeted-retry paths so the two cannot drift —
+    the null-rate coercion, escalation rules, permanent-review mandates and
+    special-rate annotations must behave identically no matter which path ran.
+    """
+    # The LLM may legitimately return null for standard_rate when no single
+    # rate exists — a country mid tax reform, for example. Note that
+    # dict.get() only applies its default when the key is absent, NOT when it
+    # is present with a null value, so coerce explicitly.
+    _raw_rate = analysis.get("standard_rate")
+    _raw_score = analysis.get("confidence_score")
+
+    rate_undetermined = _raw_rate is None
+    try:
+        current_rate: float = entry.vat_rate if rate_undetermined else float(_raw_rate)
+    except (TypeError, ValueError):
+        rate_undetermined = True
+        current_rate = entry.vat_rate
+
+    try:
+        confidence_score: float = 0.0 if _raw_score is None else float(_raw_score)
+    except (TypeError, ValueError):
+        confidence_score = 0.0
+
+    needs_review: bool = bool(analysis.get("needs_human_review", False))
+    review_reason: str | None = analysis.get("review_reason")
+    source_agreement: str = analysis.get("source_agreement") or "insufficient"
+    reasoning: str = analysis.get("reasoning") or ""
+
+    # No determinable rate is itself grounds for review — keep the stored rate
+    # rather than inventing one.
+    if rate_undetermined:
+        needs_review = True
+        review_reason = review_reason or (
+            "No single standard rate could be determined from the sources; "
+            "stored rate retained pending human review."
+        )
+
+    # Auto-escalate overrides
+    if source_agreement == "conflicting":
+        needs_review = True
+        review_reason = review_reason or "Conflicting sources detected."
+
+    if _has_circular_sourcing(search_results):
+        needs_review = True
+        review_reason = (review_reason or "") + " Circular/insufficient source diversity."
+
+    if confidence_score < 0.5:
+        needs_review = True
+        review_reason = (review_reason or "") + f" Low confidence score ({confidence_score:.2f})."
+
+    # PERMANENT_REVIEW_COUNTRIES override
+    if entry.iso_code in PERMANENT_REVIEW_COUNTRIES:
+        perm = PERMANENT_REVIEW_COUNTRIES[entry.iso_code]
+        try:
+            until_date = date.fromisoformat(perm["until"])
+            if until_date > date.today():
+                needs_review = True
+                perm_reason = perm.get("reason", "Country flagged for permanent review.")
+                review_reason = perm_reason if not review_reason else f"{review_reason} | {perm_reason}"
+        except (ValueError, KeyError):
+            pass
+
+    # SPECIAL_RATES annotation
+    if entry.iso_code in SPECIAL_RATES:
+        special = SPECIAL_RATES[entry.iso_code]
+        if abs(current_rate - special["rate"]) < 0.01:
+            note = special.get("note", "")
+            reasoning = f"{reasoning} [Special rate note: {note}]" if reasoning else f"[Special rate note: {note}]"
+
+    return {
+        "iso_code": entry.iso_code,
+        "country": entry.name,
+        "stored_rate": entry.vat_rate,
+        "found_rate": current_rate,
+        "is_match": abs(current_rate - entry.vat_rate) < 0.01,
+        "confidence": _confidence_label(confidence_score),
+        "confidence_score": confidence_score,
+        "confidence_tier": _confidence_tier(confidence_score, needs_review),
+        "needs_human_review": needs_review,
+        "review_reason": review_reason,
+        "source_agreement": source_agreement,
+        "temporal_notes": analysis.get("temporal_notes", ""),
+        "reasoning": reasoning,
+        "sources_analyzed": analysis.get("sources_analyzed", []),
+        "rate_diff": abs(current_rate - entry.vat_rate),
+        "is_calculated": analysis.get("is_calculated", False),
+        "source_note": reasoning,
+    }
+
 
 def _build_error_result(entry: CountryEntry, exc: Exception) -> dict:
     reason = f"Exception during processing: {str(exc)[:200]}"
@@ -316,6 +443,7 @@ def _run_scan(
     progress: dict = {
         "job_id": job_id,
         "status": "in_progress",
+        "mode": "scan",
         "last_completed_index": last_completed_index,
         "total": total,
         "current_country": None,
@@ -362,96 +490,12 @@ def _run_scan(
                     api_key=OPENROUTER_API_KEY,
                 )
             )
-            # The LLM may legitimately return null for standard_rate when no
-            # single rate exists — a country mid tax reform, for example. Note
-            # that dict.get() only applies its default when the key is absent,
-            # NOT when it is present with a null value, so coerce explicitly
-            # rather than relying on the default.
-            _raw_rate = analysis.get("standard_rate")
-            _raw_score = analysis.get("confidence_score")
-
-            rate_undetermined = _raw_rate is None
-            try:
-                current_rate: float = entry.vat_rate if rate_undetermined else float(_raw_rate)
-            except (TypeError, ValueError):
-                rate_undetermined = True
-                current_rate = entry.vat_rate
-
-            try:
-                confidence_score: float = 0.0 if _raw_score is None else float(_raw_score)
-            except (TypeError, ValueError):
-                confidence_score = 0.0
-
-            needs_review: bool = bool(analysis.get("needs_human_review", False))
-            review_reason: str | None = analysis.get("review_reason")
-            source_agreement: str = analysis.get("source_agreement") or "insufficient"
-            reasoning: str = analysis.get("reasoning") or ""
+            result = _build_result(entry, analysis, search_results)
+            confidence_score = result["confidence_score"]
+            current_rate = result["found_rate"]
+            needs_review = result["needs_human_review"]
 
             _slog(f"{entry.iso_code}: LLM analysis done — score={confidence_score:.2f}")
-
-            # No determinable rate is itself grounds for review — keep the
-            # stored rate rather than inventing one.
-            if rate_undetermined:
-                needs_review = True
-                review_reason = review_reason or (
-                    "No single standard rate could be determined from the sources; "
-                    "stored rate retained pending human review."
-                )
-
-            # Auto-escalate overrides
-            if source_agreement == "conflicting":
-                needs_review = True
-                review_reason = review_reason or "Conflicting sources detected."
-
-            if _has_circular_sourcing(search_results):
-                needs_review = True
-                review_reason = (review_reason or "") + " Circular/insufficient source diversity."
-
-            if confidence_score < 0.5:
-                needs_review = True
-                review_reason = (review_reason or "") + f" Low confidence score ({confidence_score:.2f})."
-
-            # PERMANENT_REVIEW_COUNTRIES override
-            if entry.iso_code in PERMANENT_REVIEW_COUNTRIES:
-                perm = PERMANENT_REVIEW_COUNTRIES[entry.iso_code]
-                try:
-                    until_date = date.fromisoformat(perm["until"])
-                    if until_date > date.today():
-                        needs_review = True
-                        perm_reason = perm.get("reason", "Country flagged for permanent review.")
-                        review_reason = perm_reason if not review_reason else f"{review_reason} | {perm_reason}"
-                except (ValueError, KeyError):
-                    pass
-
-            # SPECIAL_RATES annotation
-            if entry.iso_code in SPECIAL_RATES:
-                special = SPECIAL_RATES[entry.iso_code]
-                if abs(current_rate - special["rate"]) < 0.01:
-                    note = special.get("note", "")
-                    reasoning = f"{reasoning} [Special rate note: {note}]" if reasoning else f"[Special rate note: {note}]"
-
-            confidence_str = _confidence_label(confidence_score)
-            tier = _confidence_tier(confidence_score, needs_review)
-
-            result = {
-                "iso_code": entry.iso_code,
-                "country": entry.name,
-                "stored_rate": entry.vat_rate,
-                "found_rate": current_rate,
-                "is_match": abs(current_rate - entry.vat_rate) < 0.01,
-                "confidence": confidence_str,
-                "confidence_score": confidence_score,
-                "confidence_tier": tier,
-                "needs_human_review": needs_review,
-                "review_reason": review_reason,
-                "source_agreement": source_agreement,
-                "temporal_notes": analysis.get("temporal_notes", ""),
-                "reasoning": reasoning,
-                "sources_analyzed": analysis.get("sources_analyzed", []),
-                "rate_diff": abs(current_rate - entry.vat_rate),
-                "is_calculated": analysis.get("is_calculated", False),
-                "source_note": reasoning,
-            }
 
             found_str = f"{current_rate}%"
             stored_str = f"{entry.vat_rate}%"
@@ -494,6 +538,212 @@ def _run_scan(
         "updated_at": datetime.utcnow().isoformat() + "Z",
     }
     return final_results
+
+
+# ─── Targeted retry ───────────────────────────────────────────────────────────
+
+def _resolve_source(entry: CountryEntry) -> tuple[str | None, str | None]:
+    """Return (domain, vat_term) for a targeted search.
+
+    Checks the permanent country_sources cache first; runs Sonar discovery on a
+    miss or on a row previously flagged stale. The cache is purely directional
+    — it says where to look and what terminology to expect, and never
+    substitutes for actually performing the search and analysis.
+    """
+    try:
+        cached = db.get_country_source(entry.iso_code)
+    except Exception as e:
+        print(f"[RETRY] {entry.iso_code}: cache read failed ({e}) — discovering")
+        cached = None
+
+    if cached and cached.get("domain") and not cached.get("stale"):
+        print(f"[RETRY] {entry.iso_code}: using cached domain {cached['domain']}")
+        _slog(f"{entry.iso_code}: cached domain {cached['domain']}")
+        return cached["domain"], cached.get("vat_term")
+
+    reason = "stale" if cached else "no cache entry"
+    print(f"[RETRY] {entry.iso_code}: {reason} — running Sonar discovery")
+    _slog(f"{entry.iso_code}: discovery ({reason})")
+
+    found = asyncio.run(
+        discover_country_source(entry.name, entry.iso_code, api_key=OPENROUTER_API_KEY)
+    )
+    domain = found.get("domain")
+    vat_term = found.get("vat_term")
+
+    if domain:
+        try:
+            db.save_country_source(entry.iso_code, domain, vat_term)
+        except Exception as e:
+            print(f"[RETRY] {entry.iso_code}: could not persist source ({e})")
+        print(f"[RETRY] {entry.iso_code}: discovered {domain} (term={vat_term})")
+        _slog(f"{entry.iso_code}: discovered domain={domain} term={vat_term}")
+    else:
+        print(f"[RETRY] {entry.iso_code}: discovery found no domain — generic search")
+        _slog(f"{entry.iso_code}: discovery failed, falling back to generic search")
+
+    return domain, vat_term
+
+
+def _run_retry(
+    job: dict,
+    sandbox: SyncMcpClient,
+    search_client: SyncMcpClient,
+    vault_client: SyncMcpClient,
+) -> None:
+    """Re-verify specific countries against a discovered authoritative source.
+
+    Patches those countries' entries in scan_results.json in place, leaving
+    every other country — and any review_action already recorded against it —
+    untouched.
+    """
+    global _current_progress, _scan_log_filename
+
+    job_id = job["job_id"]
+    requested: list[str] = job.get("countries", []) or []
+    today = date.today().isoformat()
+    year = str(date.today().year)
+
+    ts_stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    _scan_log_filename = f"scan_log_{ts_stamp}.txt"
+    _slog(f"Retry started — job_id={job_id} countries={requested}")
+
+    raw_vba = vault_client.call_tool("get_vat_file")
+    all_entries, _header, _footer = parse_vba(raw_vba)
+
+    # Filter strictly by the requested list. Deliberately NOT reusing the main
+    # scan's filter, which lets test_mode override the countries list — that
+    # would silently retry the 12 test countries instead of what was asked for.
+    wanted = set(requested)
+    entries = [e for e in all_entries if e.iso_code in wanted]
+    total = len(entries)
+    print(f"[RETRY] {total} countries to re-verify.")
+    _slog(f"{total} countries to re-verify.")
+
+    scan_results = _read_scan_results(sandbox)
+    if scan_results is None:
+        print("[RETRY] No scan_results.json to patch — aborting retry.")
+        _slog("No scan_results.json found; retry aborted.")
+        return
+    results_map = scan_results.setdefault("results", {})
+
+    progress: dict = {
+        "job_id": job_id,
+        "status": "in_progress",
+        "mode": "retry",
+        "last_completed_index": 0,
+        "total": total,
+        "current_country": None,
+        "results": results_map,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    _current_progress = progress
+    _write_progress_atomic(progress)
+
+    for i, entry in enumerate(entries):
+        if _shutdown:
+            print("[RETRY] Shutdown flag set — stopping early.")
+            break
+
+        print(f"[RETRY {i + 1}/{total}] {entry.iso_code} ({entry.name})")
+        progress["current_country"] = entry.iso_code
+        progress["last_completed_index"] = i
+        progress["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        _current_progress = progress
+        _write_progress_atomic(progress)
+
+        try:
+            domain, vat_term = _resolve_source(entry)
+
+            search_results = _search_country_targeted(
+                search_client, entry, year, domain, vat_term, log_fn=print
+            )
+
+            # A cached domain that yields nothing usable is a dead domain —
+            # flag it so the next retry rediscovers instead of trusting it.
+            if domain:
+                n_urls = len(re.findall(r"URL:\s*(https?://\S+)", search_results))
+                if n_urls == 0 or _has_circular_sourcing(search_results):
+                    try:
+                        db.mark_source_stale(entry.iso_code)
+                        print(f"[RETRY] {entry.iso_code}: marked {domain} stale")
+                        _slog(f"{entry.iso_code}: marked domain {domain} stale")
+                    except Exception:
+                        pass
+
+            analysis, _raw = asyncio.run(
+                analyze_vat_with_llm(
+                    country_name=entry.name,
+                    iso_code=entry.iso_code,
+                    stored_rate=entry.vat_rate,
+                    search_results=search_results,
+                    today=today,
+                    model=LLM_MODEL,
+                    max_tokens=LLM_MAX_TOKENS,
+                    api_key=OPENROUTER_API_KEY,
+                )
+            )
+
+            result = _build_result(entry, analysis, search_results)
+            result["re_verified"] = True
+            result["re_verified_at"] = datetime.utcnow().isoformat() + "Z"
+            if domain:
+                result["re_verified_domain"] = domain
+
+            try:
+                db.save_result(
+                    entry.iso_code,
+                    result["found_rate"],
+                    result["confidence_score"],
+                    result["reasoning"],
+                    result["sources_analyzed"],
+                )
+            except Exception as e:
+                print(f"[RETRY] {entry.iso_code}: audit write failed ({e})")
+
+            print(
+                f"[RETRY {i + 1}/{total}] {entry.iso_code}: "
+                f"stored={entry.vat_rate}% found={result['found_rate']}% "
+                f"score={result['confidence_score']:.2f}"
+            )
+            _slog(
+                f"{entry.iso_code}: re-verified stored={entry.vat_rate}% "
+                f"found={result['found_rate']}% score={result['confidence_score']:.2f}"
+            )
+
+        except Exception as exc:
+            print(f"[RETRY {i + 1}/{total}] {entry.iso_code}: ERROR — {exc}")
+            _slog(f"{entry.iso_code}: RETRY EXCEPTION — {exc}")
+            result = _build_error_result(entry, exc)
+            result["re_verified"] = True
+
+        # Patch only this country, preserving any review decision already made
+        # against it via /api/scan/review.
+        previous = results_map.get(entry.iso_code) or {}
+        if "review_action" in previous:
+            result["review_action"] = previous["review_action"]
+        results_map[entry.iso_code] = result
+
+        scan_results["results"] = results_map
+        scan_results["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        _write_results_atomic(scan_results)
+
+        progress["results"] = results_map
+        progress["last_completed_index"] = i + 1
+        progress["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        _current_progress = progress
+        _write_progress_atomic(progress)
+
+        if i < total - 1 and not _shutdown:
+            time.sleep(RETRY_DELAY)
+
+    progress["status"] = "done"
+    progress["current_country"] = None
+    progress["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    _current_progress = progress
+    _write_progress_atomic(progress)
+    print(f"[RETRY] Job {job_id} complete.")
+    _slog(f"Retry job {job_id} complete.")
 
 
 # ─── Telegram summary builder ─────────────────────────────────────────────────
@@ -547,6 +797,31 @@ def main() -> None:
     _sandbox_client = sandbox
 
     while not _shutdown:
+        # Retries are cheap and user-initiated; check them first so a queued
+        # re-verification is not stuck behind a freshly-queued full scan.
+        retry_job = _poll_for_job(sandbox, RETRY_JOB_FILE)
+        if retry_job is not None:
+            print(f"[WORKER] Found pending retry {retry_job['job_id']} — claiming...")
+            _claim_job(sandbox, retry_job, RETRY_JOB_FILE)
+            try:
+                _run_retry(retry_job, sandbox, search_client, vault_client)
+                _complete_job(sandbox, retry_job, RETRY_JOB_FILE)
+            except Exception as exc:
+                print(f"[WORKER] Retry failed: {exc}")
+                _slog(f"Retry failed: {exc}")
+                _set_job_status(sandbox, retry_job, RETRY_JOB_FILE, "failed")
+                _write_progress_atomic({
+                    "job_id": retry_job.get("job_id", "unknown"),
+                    "status": "failed",
+                    "mode": "retry",
+                    "last_completed_index": 0,
+                    "total": 0,
+                    "current_country": None,
+                    "results": {},
+                    "updated_at": datetime.utcnow().isoformat() + "Z",
+                })
+            continue
+
         job = _poll_for_job(sandbox)
         if job is None:
             time.sleep(POLL_INTERVAL)
