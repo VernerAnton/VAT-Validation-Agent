@@ -283,6 +283,9 @@ async function pollStatus() {
       clearInterval(statusInterval);
       statusInterval = null;
       setTimeout(() => showView('view-results'), 1000);
+    } else if (data.status === 'failed') {
+      clearInterval(statusInterval);
+      statusInterval = null;
     }
   } catch (err) {
     // Silently ignore transient failures; render will show stale data
@@ -310,12 +313,24 @@ function renderStatus(data) {
   const completed = data.last_completed_index != null ? data.last_completed_index : 0;
   const total     = data.total || 0;
 
+  const verb = data.mode === 'retry' ? ' countries re-verified' : ' countries validated';
   if (total > 0) {
-    progText.textContent = completed + ' / ' + total + ' countries validated';
+    progText.textContent = completed + ' / ' + total + verb;
     progBar.textContent  = asciiBar(completed / total);
   } else {
     progText.textContent = '';
     progBar.textContent  = '';
+  }
+
+  // A job that stays pending means nothing is picking it up. Say so, rather
+  // than leaving a progress bar that silently never moves.
+  if (data.status === 'pending' && data.updated_at) {
+    const waitedMs = Date.now() - Date.parse(data.updated_at);
+    if (waitedMs > 60000) {
+      countryEl.textContent =
+        "Waiting for the worker to pick this up. If this doesn't change, " +
+        'the worker may not be running the latest code.';
+    }
   }
 }
 
@@ -513,6 +528,11 @@ function renderResults(data) {
 
   const bulkWrap = document.getElementById('lowconf-bulk');
   if (bulkWrap) bulkWrap.style.display = lowConf.length > 0 ? '' : 'none';
+  // Clear leftovers from a previous retry click so stale text never lingers.
+  const bulkBtn = document.getElementById('btn-retry-all');
+  if (bulkBtn) bulkBtn.disabled = false;
+  const retryLabel = document.getElementById('retry-status');
+  if (retryLabel) retryLabel.textContent = '';
 }
 
 /* ── Targeted retry ───────────────────────────────────────────────────────── */
