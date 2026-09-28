@@ -579,8 +579,15 @@ def _resolve_source(entry: CountryEntry) -> tuple[str | None, str | None]:
         print(f"[RETRY] {entry.iso_code}: discovered {domain} (term={vat_term})")
         _slog(f"{entry.iso_code}: discovered domain={domain} term={vat_term}")
     else:
-        print(f"[RETRY] {entry.iso_code}: discovery found no domain — generic search")
-        _slog(f"{entry.iso_code}: discovery failed, falling back to generic search")
+        err = found.get("error")
+        if err:
+            # The call itself broke — key, credits, model name or network.
+            msg = f"discovery FAILED ({err}) — falling back to generic search"
+        else:
+            # Sonar answered but could not identify an authority domain.
+            msg = "discovery found no domain — falling back to generic search"
+        print(f"[RETRY] {entry.iso_code}: {msg}")
+        _slog(f"{entry.iso_code}: {msg}")
 
     return domain, vat_term
 

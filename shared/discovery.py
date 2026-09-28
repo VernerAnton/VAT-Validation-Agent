@@ -69,13 +69,17 @@ async def discover_country_source(
 ) -> dict:
     """Ask Perplexity Sonar for a country's authoritative VAT source.
 
-    Returns {"domain": str | None, "vat_term": str | None, "confidence": str}.
+    Returns {"domain": str | None, "vat_term": str | None, "confidence": str,
+             "error": str | None}.
 
     Never raises — on any API or parse failure it returns domain=None so the
     caller can fall back to an untargeted search rather than aborting a retry.
+    "error" says why the call failed (HTTP status, timeout, unparseable reply),
+    so a misconfiguration is visible instead of looking like "no domain found".
+    It is None when Sonar answered but could not identify a domain.
     """
     key = api_key or OPENROUTER_API_KEY
-    failed = {"domain": None, "vat_term": None, "confidence": "low"}
+    failed = {"domain": None, "vat_term": None, "confidence": "low", "error": None}
 
     user_prompt = (
         f"Country: {country_name} ({iso_code})\n\n"
@@ -101,16 +105,18 @@ async def discover_country_source(
             )
             resp.raise_for_status()
             raw = resp.json()["choices"][0]["message"]["content"] or "{}"
-    except Exception:
-        return failed
+    except httpx.HTTPStatusError as e:
+        return {**failed, "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
+    except Exception as e:
+        return {**failed, "error": f"{type(e).__name__}: {str(e)[:200]}"}
 
     try:
         parsed = json.loads(extract_json_object(raw))
     except (json.JSONDecodeError, TypeError):
-        return failed
+        return {**failed, "error": f"Unparseable Sonar reply: {str(raw)[:200]}"}
 
     if not isinstance(parsed, dict):
-        return failed
+        return {**failed, "error": f"Unparseable Sonar reply: {str(raw)[:200]}"}
 
     vat_term = parsed.get("vat_term")
     if isinstance(vat_term, str):
@@ -122,4 +128,5 @@ async def discover_country_source(
         "domain": _clean_domain(parsed.get("domain")),
         "vat_term": vat_term,
         "confidence": parsed.get("confidence") or "low",
+        "error": None,
     }
