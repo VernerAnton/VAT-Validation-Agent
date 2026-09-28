@@ -135,6 +135,22 @@ async def scan_retry(body: RetryRequest):
         "filename": "retry_job.json",
         "content": json.dumps(job),
     })
+    # Reset the status file, as scan_start does. Without this the Status view
+    # reads the previous run's "done" and bounces straight back to Results
+    # before the worker has even picked the retry up.
+    await sb.call_tool("write_draft", {
+        "filename": "validation_progress.json",
+        "content": json.dumps({
+            "job_id": job["job_id"],
+            "status": "pending",
+            "mode": "retry",
+            "last_completed_index": 0,
+            "total": len(body.countries),
+            "current_country": None,
+            "results": {},
+            "updated_at": job["created_at"],
+        }),
+    })
     return job
 
 
