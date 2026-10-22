@@ -97,6 +97,21 @@ function confBar(score, width = 10) {
   return '[' + '█'.repeat(filled) + '░'.repeat(empty) + '] ' + score.toFixed(2);
 }
 
+// Rates are stored as floats, so arithmetic on them leaks binary rounding
+// noise (16.67 -> 22 gives 5.329999999999998). Round for display only.
+function fmtRate(n) {
+  if (n == null || isNaN(n)) return '—';
+  return String(Math.round(Number(n) * 100) / 100);
+}
+
+// Signed change from stored to found. rate_diff from the worker is an absolute
+// value, so it cannot show direction — compute it here instead.
+function fmtDiff(stored, found) {
+  if (stored == null || found == null) return '—';
+  const d = Math.round((Number(found) - Number(stored)) * 100) / 100;
+  return (d > 0 ? '+' : '') + d;
+}
+
 function scoreEmoji(score) {
   if (score >= 0.9) return '🟢';
   if (score >= 0.7) return '🟡';
@@ -435,13 +450,23 @@ function renderResults(data) {
   mismatches.forEach(r => {
     const tr = document.createElement('tr');
     tr.dataset.iso = r.iso;
+
+    // A mismatch the agent is unsure about must not look as trustworthy as a
+    // confident one — flag it the same way flagged confirmed matches are.
+    const lowConfidence = r.confidence_score != null && r.confidence_score < 0.7;
+    if (lowConfidence) {
+      tr.className = 'flagged-row';
+      tr.setAttribute('title', 'Low confidence — verify manually before approving.' +
+        (r.review_reason ? ' ' + r.review_reason : ''));
+    }
+
     tr.innerHTML = `
       <td>${r.iso}</td>
-      <td>${reVerifiedPrefix(r)}${escHtml(r.country_name || r.country || '—')}</td>
-      <td>${r.stored_rate != null ? r.stored_rate : '—'}</td>
-      <td>${r.found_rate  != null ? r.found_rate  : '—'}</td>
-      <td>${r.rate_diff   != null ? (r.rate_diff > 0 ? '+' : '') + r.rate_diff : '—'}</td>
-      <td>${r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}</td>
+      <td>${lowConfidence ? '⚠ ' : ''}${reVerifiedPrefix(r)}${escHtml(r.country_name || r.country || '—')}</td>
+      <td>${fmtRate(r.stored_rate)}</td>
+      <td>${fmtRate(r.found_rate)}</td>
+      <td>${fmtDiff(r.stored_rate, r.found_rate)}</td>
+      <td>${r.confidence_score != null ? r.confidence_score.toFixed(2) : '—'}${lowConfidence ? ' ⚠ LOW' : ''}</td>
       <td class="review-actions"></td>
     `;
     const actionsEl = tr.querySelector('.review-actions');
