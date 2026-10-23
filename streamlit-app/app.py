@@ -580,7 +580,14 @@ with st.sidebar:
     sandbox_url = st.text_input("Sandbox Server", value=SANDBOX_URL)
 
     st.subheader("LLM")
-    openrouter_key = st.text_input("OpenRouter API Key", value=OPENROUTER_API_KEY, type="password")
+    # Never pre-fill the env key: a widget's value is sent to the browser,
+    # even with type="password". Leave blank to use the server-side env key.
+    openrouter_key = st.text_input(
+        "OpenRouter API Key",
+        value="",
+        type="password",
+        placeholder="Using server key (leave blank)" if OPENROUTER_API_KEY else "Not set",
+    )
     if openrouter_key:
         OPENROUTER_API_KEY = openrouter_key
 
